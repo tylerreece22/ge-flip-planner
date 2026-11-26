@@ -111,7 +111,8 @@ table.opts tr.picked td { background: color-mix(in srgb, var(--accent) 9%, trans
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 #list-note { margin: 6px 0 10px; font-size: 13.5px; }
 .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
-table.opts { border-collapse: collapse; width: 100%; min-width: 760px; }
+table.opts { border-collapse: collapse; width: 100%; min-width: 1000px; }
+table.opts td:nth-child(2) { min-width: 230px; }
 table.opts th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--text-2); padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 table.opts td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 table.opts tr:last-child td { border-bottom: 0; }
@@ -123,6 +124,18 @@ table.opts tr.open td { border-bottom-color: transparent; }
 table.opts td.detail { padding: 0 14px 16px; background: var(--surface); cursor: default; }
 .name-cell { display: flex; flex-direction: column; gap: 2px; }
 .name-cell .why { font-size: 12.5px; color: var(--text-3); }
+table.opts td .sub { display: block; font-size: 12px; color: var(--text-3); }
+details.compare { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; }
+details.compare summary { cursor: pointer; font-size: 13.5px; color: var(--text-2); }
+table.compare { border-collapse: collapse; width: 100%; max-width: 640px; margin-top: 8px; font-size: 13.5px; }
+table.compare th { text-align: right; font-weight: 400; color: var(--text-2); padding: 4px 0 4px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.compare th:first-child, table.compare td:first-child { text-align: left; padding-left: 8px; }
+table.compare td { text-align: right; padding: 5px 0 5px 14px; border-bottom: 1px solid var(--line); }
+table.compare tr:last-child td { border-bottom: 0; }
+table.compare tbody tr { cursor: pointer; }
+table.compare tbody tr:hover td { background: var(--bg); }
+table.compare tr.cur td { font-weight: 600; background: color-mix(in srgb, var(--accent) 9%, transparent); }
+table.compare tr.cur td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .bar-cell { min-width: 190px; }
 .bar { display: flex; align-items: center; gap: 8px; }
 .bar i { display: block; height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); min-width: 2px; }

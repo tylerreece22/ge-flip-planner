@@ -15,6 +15,7 @@
     { k: 'cost', t: 'Cost each', r: true, get: o => o.unitCost },
     { k: 'profit', t: 'Profit each', r: true, get: o => o.profit },
     { k: 'roi', t: 'Return', r: true, get: o => o.roi },
+    { k: 'vol', t: 'Volume per day', r: true, get: o => o.vol, tip: 'How many trade per day on the slower of the buy side and the sell side. The smaller figure is the same volume in gp.' },
     { k: 'qty', t: 'Quantity', r: true, get: o => o.shownQty },
     { k: 'total', t: 'Profit this round', get: o => o.shownTotal },
     { k: 'pos', t: 'Gap confirmed', get: o => o.pos },
@@ -103,6 +104,7 @@
         if (inTable) window.scrollBy(0, $('#opts').getBoundingClientRect().top - before);
       }
       else if (act === 'clear-picks') { state.picks = []; save(); render(); }
+      else if (act === 'floor') { state.minRoi = +t.dataset.v; save(); render(); }
       else if (act === 'sort') {
         const col = COLS.find(c => c.k === t.dataset.col);
         state.sort = state.sort.col === col.k ? { col: col.k, dir: state.sort.dir === 'desc' ? 'asc' : 'desc' } : { col: col.k, dir: col.asc ? 'asc' : 'desc' };
@@ -235,6 +237,7 @@
           <span>Cost each <b>${gp(o.unitCost)}</b></span><span>Profit each after tax <b>${gp(o.profit)}</b> (${(o.roi * 100).toFixed(1)}%)</span>
           ${o.breakEven ? `<span>Break-even sell price <b>${gp(o.breakEven)}</b></span>` : ''}
           <span>Buying takes <b>${hoursText(o.buyHours)}</b></span><span>Selling takes <b>${hoursText(o.sellHours)}</b></span>
+          <span>Volume per day <b>${gp(Math.min(o.buyPerDay, o.sellPerDay))}</b></span>
           <span>Gap confirmed in ${dots(o)} time windows</span>
         </div>
         ${flags(o)}
@@ -248,10 +251,23 @@
   function tiles(p, s) {
     const over = p.slots > s.slots;
     return `<div class="tiles">${[
-      [fmt(p.cost), `to spend of ${fmt(s.cash)}`], [fmt(p.profit), 'expected profit after tax'],
+      [fmt(p.cost), `to spend of ${fmt(s.cash)}`], [fmt(Math.max(0, s.cash - p.cost)), 'left idle'], [fmt(p.profit), 'expected profit after tax'],
       [p.cost ? ((p.profit / p.cost) * 100).toFixed(1) + '%' : '–', 'return on what you spend'],
       [`${p.slots} of ${s.slots}`, over ? '⚠ slots needed to buy, more than you have free' : 'slots used to buy'],
     ].map(t => `<div class="tile"><b>${t[0]}</b><span>${t[1]}</span></div>`).join('')}</div>`;
+  }
+
+  const FLOORS = [0, 5, 8, 12, 15];
+  /** What the plan would look like at each minimum return, so the idle-cash trade-off is visible. */
+  function compare(s) {
+    const rows = FLOORS.map(f => {
+      const p = GE.plan(opps, Object.assign({}, s, { minRoi: f / 100 })), idle = Math.max(0, s.cash - p.cost), cur = f === +state.minRoi;
+      return `<tr class="${cur ? 'cur' : ''}" data-act="floor" data-v="${f}" title="Use this minimum return">
+        <td>${f ? f + '%' : 'Any'}${cur ? ' (current)' : ''}</td><td class="num">${fmt(p.cost)}</td><td class="num">${fmt(idle)} (${Math.round((idle / s.cash) * 100)}%)</td>
+        <td class="num">${fmt(p.profit)}</td><td class="num">${p.cost ? ((p.profit / p.cost) * 100).toFixed(1) + '%' : '–'}</td></tr>`;
+    }).join('');
+    return `<details class="compare" open><summary>How the minimum return trades off against idle cash (click a row to use it)</summary>
+      <table class="compare"><thead><tr><th>Minimum return</th><th>Cash working</th><th>Left idle</th><th>Expected profit</th><th>Return on spend</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
 
   function nameOf(key) {
@@ -278,11 +294,11 @@
     }
     const p = GE.plan(opps, s);
     if (!p.picks.length) {
-      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now${s.minRoi ? ` at a return of ${state.minRoi}% or more` : ''}. Sets need 3 to 5 free slots to pack; try more slots, a lower minimum return, or tick options yourself in the list below.</div>`;
+      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now${s.minRoi ? ` at a return of ${state.minRoi}% or more` : ''}. Sets need 3 to 5 free slots to pack; try more slots, a lower minimum return, or tick options yourself in the list below.</div>${compare(s)}`;
       return;
     }
     const left = s.cash - p.cost;
-    el.innerHTML = `${tiles(p, s)}${p.picks.map(o => card(o, false)).join('')}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}`;
+    el.innerHTML = `${tiles(p, s)}${compare(s)}${p.picks.map(o => card(o, false)).join('')}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}`;
   }
 
   // ---- Every option --------------------------------------------------------------
@@ -296,6 +312,7 @@
     list.forEach(o => {
       o.low = o.roi < s.minRoi;
       o.fits = o.qty >= 1 && o.slots <= s.slots && !o.low;
+      o.vol = Math.min(o.buyPerDay, o.sellPerDay);
       o.shownQty = o.fits ? o.qty : o.cap;
       o.shownTotal = o.fits ? o.total : o.capTotal;
       o.picked = picks.has(o.key);
@@ -320,17 +337,18 @@
           <td class="tickcell" data-act="select" data-key="${o.key}"><input type="checkbox" ${o.picked ? 'checked' : ''} aria-label="Use ${esc(o.title)} in my plan"></td>
           <td><div class="name-cell"><span><span class="caret">${isOpen ? '▾' : '▸'}</span><span class="kind">${KIND[o.type]}</span>${esc(o.name)}${warn}</span>${need ? `<span class="why">${need}</span>` : ''}</div></td>
           <td class="r num">${o.slots}</td><td class="r num">${fmt(o.unitCost)}</td><td class="r num">${fmt(o.profit)}</td><td class="r num">${(o.roi * 100).toFixed(1)}%</td>
+          <td class="r num">${gp(o.vol)}<span class="sub">${fmt(o.vol * o.unitCost)} gp</span></td>
           <td class="r num">${gp(o.shownQty)}</td>
           <td class="bar-cell"><div class="bar"><i style="width:${o.fits ? Math.max(1, (o.total / max) * 60) : 0}%"></i><span class="num">${fmt(o.shownTotal)}</span></div></td>
-          <td>${dots(o)}</td></tr>${isOpen ? `<tr><td class="detail" colspan="9">${steps(o, o.shownQty)}${flags(o)}${detail(o)}
+          <td>${dots(o)}</td></tr>${isOpen ? `<tr><td class="detail" colspan="10">${steps(o, o.shownQty)}${flags(o)}${detail(o)}
           <div class="card-foot"><button class="link" data-act="hide" data-key="${o.key}">Hide this</button></div></td></tr>` : ''}`;
     }).join('');
     const heads = COLS.map(c => {
       const on = c.k === col.k;
-      return `<th class="${c.r ? 'r' : ''}"${on ? ` aria-sort="${sort.dir === 'desc' ? 'descending' : 'ascending'}"` : ''}><button class="th" data-act="sort" data-col="${c.k}" title="Sort by ${esc(c.t.toLowerCase())}">${esc(c.t)}<span class="arrow">${on ? (sort.dir === 'desc' ? '▼' : '▲') : ''}</span></button></th>`;
+      return `<th class="${c.r ? 'r' : ''}"${on ? ` aria-sort="${sort.dir === 'desc' ? 'descending' : 'ascending'}"` : ''}><button class="th" data-act="sort" data-col="${c.k}" title="${esc(c.tip || 'Sort by ' + c.t.toLowerCase())}">${esc(c.t)}<span class="arrow">${on ? (sort.dir === 'desc' ? '▼' : '▲') : ''}</span></button></th>`;
     }).join('');
     $('#opts').innerHTML = `<thead><tr><th><span class="sr">Use in my plan</span></th>${heads}</tr></thead>
-      <tbody>${rows || '<tr><td colspan="9" class="muted">Nothing to show for this filter.</td></tr>'}</tbody>`;
+      <tbody>${rows || '<tr><td colspan="10" class="muted">Nothing to show for this filter.</td></tr>'}</tbody>`;
     $('#more').innerHTML = list.length > shown ? `<button class="link" data-act="more">Show more (${list.length - shown} left)</button>` : '';
     const names = state.hidden.map(k => { const o = opps.find(x => x.key === k); return o ? `<button class="link" data-act="unhide" data-key="${k}">${esc(o.title)}</button>` : ''; }).filter(Boolean);
     $('#hidden').innerHTML = state.hidden.length ? `Hidden: ${names.join(', ') || state.hidden.length + ' not currently available'} · <button class="link" data-act="unhide-all">Show all again</button>` : '';

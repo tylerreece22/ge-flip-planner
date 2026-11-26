@@ -245,7 +245,9 @@
   function sizeFor(o, hours) {
     const frac = (hours / 24) * SHARE;
     let cap = Math.floor(Math.min(o.buyPerDay, o.sellPerDay) * frac);
-    if (o.limit !== null) cap = Math.min(cap, o.limit);
+    // The buy limit resets every 4 hours and an offer keeps filling after the reset,
+    // so a longer gap between check-ins can absorb more than one limit's worth.
+    if (o.limit !== null) cap = Math.min(cap, o.limit * Math.max(1, Math.floor(hours / 4)));
     return Math.max(0, cap);
   }
   const hoursToFill = (qty, perDay) => (perDay > 0 ? qty / ((perDay / 24) * SHARE) : Infinity);
@@ -265,11 +267,15 @@
 
   /** Best combination for the cash and slots: maximise expected profit, never using one item twice.
       `minRoi` is the lowest return per trade (profit / cost, after tax) allowed into the plan, e.g. 0.08.
-      It keeps cash out of big low-margin trades that only win on size. */
+      It keeps cash out of big low-margin trades that only win on size.
+      There is deliberately no "use the most cash" goal: tested on live data it gave up most of the profit
+      just to have more gp tied up (10m, 4 slots: 9.9m working for 195k, against 6.3m working for 1.34m).
+      Idle cash is controlled by lowering `minRoi` or lengthening `hours`, both of which raise profit. */
   function plan(opps, { cash, slots, hours, types, hidden, minRoi }) {
+    const worth = o => o.profit * o.confidence;
     const allow = o => o.confidence > 0 && o.roi >= (minRoi || 0) && (!types || types[o.type]) && !(hidden && hidden.has(o.key)) && o.slots <= slots;
     let pool = sized(opps.filter(allow), { cash: Infinity, hours }).filter(o => o.unitCost <= cash);
-    pool.forEach(o => { o.perSlot = (Math.min(o.cap, Math.floor(cash / o.unitCost)) * o.profit * o.confidence) / o.slots; });
+    pool.forEach(o => { o.perSlot = (Math.min(o.cap, Math.floor(cash / o.unitCost)) * worth(o)) / o.slots; });
     pool = pool.filter(o => o.perSlot > 0).sort((a, b) => b.perSlot - a.perSlot).slice(0, 40);
     const bound = pool.map((_, i) => Math.max(0, ...pool.slice(i).map(o => o.perSlot)));
     const minPick = Math.max(MIN_PICK, cash * 0.005);
@@ -285,7 +291,7 @@
         if (qty < 1 || qty * o.profit < minPick) continue;    // not worth a slot
         o.ids.forEach(id => used.add(id));
         picks.push({ o, qty });
-        rec(j + 1, cashLeft - qty * o.unitCost, slotsLeft - o.slots, picks, expected + qty * o.profit * o.confidence, used);
+        rec(j + 1, cashLeft - qty * o.unitCost, slotsLeft - o.slots, picks, expected + qty * worth(o), used);
         picks.pop();
         o.ids.forEach(id => used.delete(id));
       }
