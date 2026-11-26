@@ -69,7 +69,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-.tile b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.tile b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
 .tile span { font-size: 12.5px; color: var(--text-2); }
 
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
@@ -105,6 +105,10 @@ details.evidence[open] > summary > .link:first-child { color: var(--text); }
 .flags li.info::before { content: "i"; font-weight: 700; font-style: italic; color: var(--text-3); left: 4px; }
 .card-foot { display: flex; gap: 14px; margin-top: 12px; flex-wrap: wrap; }
 .link { font: inherit; font-size: 13.5px; color: var(--text-2); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
+details.routine ol { margin: 8px 0 2px; padding-left: 20px; font-size: 14px; }
+details.routine li { margin: 4px 0; }
+.replay-note { margin: 0 0 12px; font-size: 13.5px; color: var(--text-2); }
+.replay-note b { color: var(--text); }
 .empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 18px; color: var(--text-2); }
 
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
@@ -233,4 +237,6 @@ table.mini td.num { text-align: right; padding-right: 0; }
   table.compare th { white-space: normal; vertical-align: bottom; }
   table.compare th, table.compare td { padding-left: 6px; }
   table.compare .cur-word { display: none; }
+  table.compare td { white-space: normal; }
+  #plan table.compare th:nth-child(2), #plan table.compare td:nth-child(2), #plan table.compare th:nth-child(5), #plan table.compare td:nth-child(5) { display: none; }
 }

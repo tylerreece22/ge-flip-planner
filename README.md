@@ -21,6 +21,28 @@ The "How it works" tab on the site explains the checks each option has to pass.
 - The page also fetches live prices from the same API each time it is opened,
   so the offer prices are current even between runs.
 
+## How the rules were tested
+
+`scripts/backtest.js` replays the planner against real hourly trading. For every
+4 hours in the downloaded history it rebuilds exactly what the site would have
+known, asks `site/core.js` for its plan, then walks forward hour by hour to see
+what would have filled and sold.
+
+```bash
+python3 scripts/fetch_history.py hist 21
+```
+
+```bash
+node scripts/backtest.js hist
+```
+
+Run it again with `SHARE=0.25` in front to assume you catch a quarter of the
+market's flow instead of half. Over 5-26 November 2026 plans at the default 8%
+minimum return made 55-80% of the all-fills profit figure and lost money in
+about 1 round in 20. Options that fail the checks lost money overall. The 5%
+return floor, the conservative profit figure and the type weights in
+`site/core.js` all come from this replay, so re-run it before changing them.
+
 ## Layout
 
 | Path | What it is |
@@ -30,6 +52,7 @@ The "How it works" tab on the site explains the checks each option has to pass.
 | `scripts/scrape.py` | Builds `site/data.json` (Python standard library only) |
 | `scripts/build_sets.py` | Rebuilds `sets.json`, the list of sets and their pieces, from the Wiki |
 | `scripts/preview.js` | Prints the planner's picks in a terminal |
+| `scripts/fetch_history.py`, `scripts/backtest.js` | Download past prices and replay the planner against them |
 
 ## Running it yourself
 
@@ -44,7 +67,7 @@ Then open http://localhost:8765. To see the picks without a browser:
 node scripts/preview.js 46m 2 8
 ```
 
-The arguments are cash, free slots, and hours between check-ins.
+The arguments are cash, free slots, hours between check-ins, and optionally the minimum return in percent.
 
 When the game adds a new item set, run `python3 scripts/build_sets.py` and
 commit the updated `sets.json`.

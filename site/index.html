@@ -84,28 +84,60 @@
     <h2>How it works</h2>
     <div class="prose">
       <p>Every item has two live prices. The <b>instant-sell price</b> is what impatient sellers accept, so a buy offer placed there gets filled as people dump. The <b>instant-buy price</b> is what impatient buyers pay, so a sell offer placed there gets filled as people buy. All prices here come from real trades recorded by the OSRS Wiki.</p>
-      <p>The Grand Exchange takes <b>2% of every sale</b>, so the break-even sell price is the buy price divided by 0.98. Every profit shown is after that tax.</p>
+      <p>The Grand Exchange takes <b>2% of every sale</b>, rounded down and capped at 5m per item, so the break-even sell price is the buy price divided by 0.98. Every profit shown is after that tax.</p>
       <h3>The three kinds of trade</h3>
       <ul>
-        <li><b>Packing a set.</b> Bid for the pieces, pack them at a Grand Exchange clerk (right-click, Sets), and sell the set. Buyers pay extra for a set in one click, while people dumping drops sell single pieces cheaply.</li>
-        <li><b>Unpacking a set.</b> The reverse: buy the set, unpack it at the clerk, and sell the pieces.</li>
-        <li><b>Plain flip.</b> Buy at the instant-sell price and sell at the instant-buy price. Margins are thinner, so these mostly fill leftover slots.</li>
+        <li><b>Packing a set.</b> Bid for the pieces, pack them at a Grand Exchange clerk (right-click, Sets), and sell the set. Buyers pay extra for a set in one click, while people dumping drops sell single pieces cheaply. This is the one the testing supports best.</li>
+        <li><b>Unpacking a set.</b> The reverse: buy the set, unpack it at the clerk, and sell the pieces. It rarely passes the checks, and it did worse than packing when it did.</li>
+        <li><b>Plain flip.</b> Buy at the instant-sell price and sell at the instant-buy price. Most flips have margins too thin to survive, so few pass.</li>
       </ul>
+      <h3>The profit figure is deliberately conservative</h3>
+      <p>The gap you can see right now overstates what you keep, because you tend to notice a gap when it is at its widest. So "profit each" is the <b>lowest</b> of four figures: the gap at today's offer prices, the gap in each of the last three time windows (last 4 hours, 4–12 hours ago, 12–24 hours ago), and the gap if the thing you sell fell back to its 7-day price. Open any option to see all of them.</p>
       <h3>The checks every option has to pass</h3>
       <ol>
-        <li><b>The gap has to persist.</b> Profit is worked out separately for the last 4 hours, 4–12 hours ago and 12–24 hours ago. A gap in all three is structural; a gap in only one is usually a single odd trade and is left out of your plan.</li>
-        <li><b>It has to actually trade.</b> Quantities are capped by the buy limit and by half of what the market trades between your check-ins, counted on the slowest side.</li>
-        <li><b>Spikes are priced in.</b> If the thing you would sell is more than 4% above its 7-day price, the card says what you would make if it dropped back.</li>
+        <li><b>The gap has to persist.</b> It must show in at least two of the three time windows and be negative in none.</li>
+        <li><b>It must still pay at the 7-day price.</b> If the gap only exists because a price has just moved, it fails.</li>
+        <li><b>At least 5% return</b> on the conservative figure. Below that, ordinary price movement between buying and selling is as big as the margin.</li>
+        <li><b>It has to actually trade.</b> Quantities are capped by the buy limit, which resets every 4 hours, and by half of what the market trades between your check-ins, counted on the slowest side.</li>
         <li><b>Plain flips must be calm.</b> An item moving more than 5% against its week, or 3% within the day, is not offered as a flip.</li>
-        <li><b>Slots count.</b> A four-piece set needs four slots to buy, so options are ranked by what fits the slots and cash you enter.</li>
-        <li><b>Return has a floor.</b> Your plan only uses trades whose profit after tax is at least the minimum return you pick (8% unless you change it). Among those it chooses the combination with the most profit. This keeps your cash out of large low-margin trades that only win on size.</li>
+        <li><b>Slots count.</b> A four-piece set needs four slots to buy, so the plan is the most profitable combination that fits your slots and cash.</li>
       </ol>
+      <p>Anything that fails is listed under "Failed checks" so you can see it, but it never goes into the automatic plan.</p>
+
+      <h3 id="tested">How it was tested</h3>
+      <p>The planner was replayed against three weeks of real hourly trading (5–26 November 2026, 120 starting points, one every 4 hours). At each point it was given only the data the site would have had then, and its plan was walked forward hour by hour:</p>
+      <ul>
+        <li>A buy offer filled in an hour only if that hour's average instant-sell price was at or below it, and then only for a share of that hour's volume, within the buy limit.</li>
+        <li>At each check-in it followed the routine shown above your plan: re-list at the current price, re-bid what has not filled, finish sets already started.</li>
+        <li>A sell offer filled only in hours whose average instant-buy price reached it. Anything unsold after five check-ins was dumped at the instant-sell price, tax included.</li>
+      </ul>
+      <table class="compare" style="max-width:none">
+        <thead><tr><th>What was replayed</th><th>Made, against the all-fills profit shown</th><th>Trades or rounds that lost money</th></tr></thead>
+        <tbody style="cursor:default">
+          <tr><td>Plans at a 15% minimum return</td><td>70–85%</td><td>about 1 in 50</td></tr>
+          <tr><td>Plans at 12%</td><td>60–80%</td><td>about 1 in 30</td></tr>
+          <tr><td>Plans at 8% (the default)</td><td>55–80%</td><td>about 1 in 20</td></tr>
+          <tr><td>Plans at 5%</td><td>50–70%</td><td>1 in 10 to 1 in 20, worst round −2.3m to −3.7m</td></tr>
+          <tr><td>Packing sets that pass the checks</td><td>68–91%</td><td>2–6%</td></tr>
+          <tr><td>Plain flips that pass</td><td>36–52%</td><td>about 1 in 10</td></tr>
+          <tr><td>Unpacking sets that pass (only 18 cases)</td><td>17–51%</td><td>about 1 in 4</td></tr>
+          <tr><td><b>Options that failed the checks</b></td><td><b>lost money overall</b></td><td><b>more than 4 in 10</b></td></tr>
+        </tbody>
+      </table>
+      <p>The lower figure in each range assumes you catch a quarter of the market's flow while your offer is live, the higher one half. Three things the replay made clear:</p>
+      <ul>
+        <li><b>Ticking options from "Failed checks" loses money.</b> So do margins under 5%, which is why the minimum return no longer goes below that.</li>
+        <li><b>The check-in routine matters as much as the pick.</b> Without re-bidding and finishing sets, the same trades kept about 40% of their profit and lost money three times as often.</li>
+        <li><b>Expensive sets are the riskiest passes.</b> Sets costing over 1m each lost money in roughly 1 round in 7, mostly by leaving you holding pieces when one piece would not fill.</li>
+      </ul>
+      <p class="muted">Three weeks is one stretch of one market. A game update that moves prices sharply can do worse than anything in that window. Order sizes also matter: about two thirds of buy orders filled completely within two check-ins, and the rest filled in part.</p>
+
       <h3>Profit against idle cash</h3>
-      <p>The best returns are in small markets, so a high minimum return can leave most of your cash unused. The comparison table under your plan shows, for each minimum return, how much cash would be working, how much would sit idle and the profit. Click a row to use it. A longer gap between check-ins also puts more cash to work, because quantities are sized to what can fill before you next look, and the buy limit resets every 4 hours.</p>
+      <p>The best returns are in small markets, so a high minimum return can leave most of your cash unused. The comparison table under your plan shows, for each minimum return, how much cash would be working, how much would sit idle, the profit, and how that setting did in the replay. Click a row to use it. A longer gap between check-ins also puts more cash to work, because quantities are sized to what can fill before you next look.</p>
       <p>The plan never uses more cash just to have less idle. Putting more cash to work is not always more profit: 10m at 20% beats 20m at 8%.</p>
       <p><b>Volume per day</b> in the option list is how many trade daily on the slower of the buy side and the sell side, with the same figure in gp underneath. It tells a large market from a small one.</p>
       <h3>Choosing your own</h3>
-      <p>Click any column heading in the option list to sort by it, for example by return. Tick the options you want and the plan is rebuilt from just those, with cash going to the highest return first. Your own picks are sized by the same volume and buy-limit caps, but the minimum return is not applied to them.</p>
+      <p>Click any column heading in the option list to sort by it, for example by return. Tick the options you want and the plan is rebuilt from just those, with cash going to the highest return first. Your own picks are sized by the same volume and buy-limit caps, but the minimum return is not applied to them, and a pick that failed the checks counts for no profit.</p>
       <h3>How the offer prices are set</h3>
       <ul>
         <li><b>Buy offers</b> sit just above where dumps have actually been filling over the last few hours.</li>

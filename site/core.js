@@ -31,7 +31,8 @@
   const FRESH = 3 * 3600;          // a "latest" trade older than this is ignored
   const SPIKE = 0.04;              // output price this far above its 7-day median counts as spiked
   const SHARE = 0.5;               // assume you capture half of the market's flow while your offer is best
-  const MIN_PICK = 50000;          // a pick must make this much, or 0.5% of your cash if larger, to be worth a slot
+  const MIN_PICK = 100000;         // a pick that cannot make this much in a round is not worth a slot
+  const TIME_SHARE = 0.3;          // for time estimates only: in the replay, orders filled at about this share of the flow
 
   function median(a) {
     const s = a.filter(x => x > 0).sort((x, y) => x - y);
@@ -104,29 +105,52 @@
     return roundUp(base);
   }
 
-  const quickSell = (it, now) => (it.lo && now - it.loT <= FRESH ? it.lo : it.medLo || it.w[0].lo || it.w[1].lo || 0);
+  /** What selling straight into buy offers pays. One freak trade cannot move it more than 10% off the recent median. */
+  function quickSell(it, now) {
+    const base = it.medLo || it.w[0].lo || it.w[1].lo || 0;
+    if (it.lo && now - it.loT <= FRESH) return base ? Math.round(clamp(it.lo, base * 0.9, base * 1.03)) : it.lo;
+    return base;
+  }
 
   // ---- Opportunities ----------------------------------------------------------
 
+  // What the three-week replay (scripts/backtest.js) showed, and the rules that follow from it:
+  //   * Today's gap overstates what you keep. The lowest of today's gap, the gap in each recent time
+  //     window and the gap at the 7-day price predicted the replay's result well, so that is "profit".
+  //   * Under a 5% return on that measure, trades lost money on average: the price moves between
+  //     buying and selling are as big as the margin. Nothing under FLOOR goes into a plan.
+  //   * Packing sets kept its margin. Plain flips kept about 60% of it and unpacking about half, on few
+  //     cases, so they are weighted down when the plan chooses between options.
+  const FLOOR = 0.05;
+  const TYPE_WEIGHT = { pack: 1, flip: 0.6, unpack: 0.5 };
+
   function grade(o) {
-    // How many of the three time windows show the gap, and how much to trust it.
-    const ws = o.windows;
+    const ws = o.windows, seen = ws.filter(x => x !== null);
     o.pos = ws.filter(x => x !== null && x > 0).length;
     o.neg = ws.filter(x => x !== null && x <= 0).length;
+    o.profitNow = o.profit;                                           // at the offer prices shown, right now
+    o.profit = Math.max(0, Math.min(o.profitNow, o.fade, ...seen));   // the conservative figure everything else uses
     o.roi = o.unitCost ? o.profit / o.unitCost : 0;
+    o.roiNow = o.unitCost ? o.profitNow / o.unitCost : 0;
     o.flags = [];
-    let conf = 1;
+    let conf = TYPE_WEIGHT[o.type];
     if (o.pos === 3) { /* solid */ }
-    else if (o.pos === 2 && o.neg === 0) { conf *= 0.6; o.flags.push({ level: 'info', text: 'Too few trades in one of the three time windows to confirm the gap there.' }); }
+    else if (o.pos === 2 && o.neg === 0) { conf *= 0.8; o.flags.push({ level: 'info', text: 'Too few trades in one of the three time windows to confirm the gap there.' }); }
     else { conf = 0; o.flags.push({ level: 'warn', text: 'The gap does not show up consistently across the last 24 hours. Likely a one-off trade.' }); }
-    if (o.roi > 0.4) { conf *= 0.5; o.flags.push({ level: 'warn', text: 'Unusually wide gap. Check the prices in game before committing.' }); }
-    if (o.trend > SPIKE) {
-      const bad = o.fade <= 0;
-      if (bad) conf *= 0.5;
-      o.flags.push({ level: bad ? 'warn' : 'info', text: `${o.outputLabel} ${o.outputPlural ? 'are' : 'is'} ${(o.trend * 100).toFixed(0)}% above the 7-day price. If that fades you would ${o.fade > 0 ? 'still make' : 'lose'} about ${fmt(Math.abs(o.fade))} each.` });
+    if (o.fade <= 0) {
+      conf = 0;
+      o.flags.push({ level: 'warn', text: `At the 7-day price this would ${o.fade < 0 ? 'lose about ' + fmt(-o.fade) + ' each' : 'make nothing'}, so the gap depends on a price that has just moved. In the replay these lost money about a third of the time.` });
+    } else if (o.trend > SPIKE) {
+      o.flags.push({ level: 'info', text: `${o.outputLabel} ${o.outputPlural ? 'are' : 'is'} ${(o.trend * 100).toFixed(0)}% above the 7-day price. The profit shown already assumes that fades.` });
     } else if (o.trend < -SPIKE) {
       o.flags.push({ level: 'info', text: `${o.outputLabel} ${o.outputPlural ? 'have' : 'has'} dropped ${(Math.abs(o.trend) * 100).toFixed(0)}% against the 7-day price. Sell the same day and do not stockpile.` });
     }
+    if (conf > 0 && o.roi < FLOOR) {
+      conf = 0;
+      o.flags.push({ level: 'warn', text: `Returns ${(o.roi * 100).toFixed(1)}% once prices slipping back is allowed for, under the 5% floor. In the replay, margins this thin lost money on average.` });
+    }
+    if (o.roiNow > 0.4) o.flags.push({ level: 'info', text: 'Very wide gap, which usually means a tiny market. Check the prices in game before committing.' });
+    if (o.type === 'unpack') o.flags.push({ level: 'info', text: 'Unpacking has few past cases to check against, and those did worse than packing. Treat the figure as less certain.' });
     if (o.limit === null) o.flags.push({ level: 'info', text: 'No buy limit is listed for this. If an offer stops filling at a fixed number, that is the limit.' });
     if (o.profit <= 0) conf = 0;
     o.confidence = conf;
@@ -228,8 +252,8 @@
     const out = [];
     for (const s of model.sets) {
       const a = packOpp(model, s), b = unpackOpp(model, s);
-      if (a && a.profit > 0) out.push(a);
-      if (b && b.profit > 0) out.push(b);
+      if (a && a.profitNow > 0) out.push(a);
+      if (b && b.profitNow > 0) out.push(b);
     }
     for (const it of model.items.values()) {
       if (EXCLUDE_FLIP.has(it.id) || it.limit === null || it.medLo < FLIP_MIN_PRICE) continue;
@@ -250,7 +274,7 @@
     if (o.limit !== null) cap = Math.min(cap, o.limit * Math.max(1, Math.floor(hours / 4)));
     return Math.max(0, cap);
   }
-  const hoursToFill = (qty, perDay) => (perDay > 0 ? qty / ((perDay / 24) * SHARE) : Infinity);
+  const hoursToFill = (qty, perDay) => (perDay > 0 ? qty / ((perDay / 24) * TIME_SHARE) : Infinity);
 
   /** Size each opportunity for this player and keep the ones worth showing. */
   function sized(opps, { cash, hours }) {
@@ -273,12 +297,12 @@
       Idle cash is controlled by lowering `minRoi` or lengthening `hours`, both of which raise profit. */
   function plan(opps, { cash, slots, hours, types, hidden, minRoi }) {
     const worth = o => o.profit * o.confidence;
-    const allow = o => o.confidence > 0 && o.roi >= (minRoi || 0) && (!types || types[o.type]) && !(hidden && hidden.has(o.key)) && o.slots <= slots;
+    const allow = o => o.confidence > 0 && o.roi >= Math.max(FLOOR, minRoi || 0) && (!types || types[o.type]) && !(hidden && hidden.has(o.key)) && o.slots <= slots;
     let pool = sized(opps.filter(allow), { cash: Infinity, hours }).filter(o => o.unitCost <= cash);
     pool.forEach(o => { o.perSlot = (Math.min(o.cap, Math.floor(cash / o.unitCost)) * worth(o)) / o.slots; });
     pool = pool.filter(o => o.perSlot > 0).sort((a, b) => b.perSlot - a.perSlot).slice(0, 40);
     const bound = pool.map((_, i) => Math.max(0, ...pool.slice(i).map(o => o.perSlot)));
-    const minPick = Math.max(MIN_PICK, cash * 0.005);
+    const minPick = MIN_PICK;
     let best = { expected: 0, picks: [] }, nodes = 0;
     (function rec(i, cashLeft, slotsLeft, picks, expected, used) {
       if (expected > best.expected) best = { expected, picks: picks.slice() };
@@ -324,6 +348,7 @@
         buyHours: hoursToFill(qty, o.buyPerDay), sellHours: hoursToFill(qty, o.sellPerDay),
       }));
     }
+    // A pick that failed the checks has a conservative profit of zero, so it adds cost but no expected profit.
     return {
       picks, unfunded, missing: keys.filter(k => !byKey.has(k)),
       cost: picks.reduce((a, p) => a + p.cost, 0), profit: picks.reduce((a, p) => a + p.total, 0),
@@ -362,5 +387,5 @@
     return Math.round(x * mult);
   }
 
-  return { tax, net, breakEven, load, applyLive, opportunities, sized, plan, pickPlan, priceCheck, bidPrice, askPrice, payPrice, quickSell, fmt, gp, parseCash, median };
+  return { FLOOR, tax, net, breakEven, load, applyLive, opportunities, sized, plan, pickPlan, priceCheck, bidPrice, askPrice, payPrice, quickSell, fmt, gp, parseCash, median };
 });

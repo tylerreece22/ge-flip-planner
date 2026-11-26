@@ -13,8 +13,8 @@
     { k: 'name', t: 'Option', get: o => o.name.toLowerCase(), asc: true },
     { k: 'slots', t: 'Slots', r: true, get: o => o.slots },
     { k: 'cost', t: 'Cost each', r: true, get: o => o.unitCost },
-    { k: 'profit', t: 'Profit each', r: true, get: o => o.profit },
-    { k: 'roi', t: 'Return', r: true, get: o => o.roi },
+    { k: 'profit', t: 'Profit each', r: true, get: o => o.shownProfit, tip: 'After tax, and conservative: the lowest of the gap today, in each recent time window, and at the 7-day price.' },
+    { k: 'roi', t: 'Return', r: true, get: o => o.shownRoi, tip: 'Conservative profit each divided by cost each.' },
     { k: 'vol', t: 'Volume per day', r: true, get: o => o.vol, tip: 'How many trade per day on the slower of the buy side and the sell side. The smaller figure is the same volume in gp.' },
     { k: 'qty', t: 'Quantity', r: true, get: o => o.shownQty },
     { k: 'total', t: 'Profit this round', get: o => o.shownTotal },
@@ -28,6 +28,7 @@
   state.types = Object.assign({}, defaults.types, state.types);
   if (!state.sort || typeof state.sort !== 'object') state.sort = state.sort === 'roi' ? { col: 'roi', dir: 'desc' } : { col: 'total', dir: 'desc' };
   if (!Array.isArray(state.picks)) state.picks = [];
+  if (!(+state.minRoi >= 5)) state.minRoi = 5;   // nothing under 5% is offered any more
   const save = () => { try { localStorage.setItem('ge-flips', JSON.stringify(state)); } catch (e) { /* ignore */ } };
 
   let data = null, model = null, opps = [], liveError = false, shown = 40, picked = null;
@@ -105,6 +106,7 @@
       }
       else if (act === 'clear-picks') { state.picks = []; save(); render(); }
       else if (act === 'floor') { state.minRoi = +t.dataset.v; save(); render(); }
+      else if (act === 'how') { state.tab = 'how'; save(); tabs(); const h = document.getElementById('tested'); if (h) h.scrollIntoView(); }
       else if (act === 'sort') {
         const col = COLS.find(c => c.k === t.dataset.col);
         state.sort = state.sort.col === col.k ? { col: col.k, dir: state.sort.dir === 'desc' ? 'asc' : 'desc' } : { col: col.k, dir: col.asc ? 'asc' : 'desc' };
@@ -213,9 +215,10 @@
     return `<div class="detail-grid"><div>
         <table class="mini">
           <tr><th colspan="2"><b>Profit each, by time window</b></th></tr>${rows}
-          <tr><th>At the offer prices shown, now</th><td class="num">${signed(o.profit)}</td></tr>
-          <tr><th>If you sold the ${sellWord} instantly instead</th><td class="num">${signed(o.quick)}</td></tr>
+          <tr><th>At the offer prices shown, now</th><td class="num">${signed(o.profitNow)}</td></tr>
           <tr><th>If prices returned to the 7-day level</th><td class="num">${signed(o.fade)}</td></tr>
+          <tr><th><b>Counted in your plan: the lowest of those</b></th><td class="num"><b>${signed(o.profit)}</b></td></tr>
+          <tr><th>If you sold the ${sellWord} instantly instead</th><td class="num">${signed(o.quick)}</td></tr>
           <tr><th>${o.type === 'unpack' ? 'Sets traded per day' : 'Sold into buy offers per day (slowest piece)'}</th><td class="num">${gp(o.buyPerDay)}</td></tr>
           <tr><th>${o.type === 'unpack' ? 'Bought per day (slowest piece)' : 'Bought from sell offers per day'}</th><td class="num">${gp(o.sellPerDay)}</td></tr>
           <tr><th>Buy limit per 4 hours</th><td class="num">${o.limit === null ? 'not listed' : gp(o.limit)}</td></tr>
@@ -225,17 +228,18 @@
   // ---- Your plan -----------------------------------------------------------------
   function settings() {
     const cash = GE.parseCash(state.cash);
-    return { cash, slots: +state.slots, hours: +state.hours, minRoi: (+state.minRoi || 0) / 100, types: state.types, hidden: new Set(state.hidden) };
+    return { cash, slots: +state.slots, hours: +state.hours, minRoi: Math.max(5, +state.minRoi || 0) / 100, types: state.types, hidden: new Set(state.hidden) };
   }
 
   function card(o, manual) {
     return `<article class="card">
         <div class="card-head"><h3><span class="kind">${KIND[o.type]}</span>${esc(o.name)} × ${gp(o.qty)}</h3>
-          <span class="gain">about ${fmt(o.total)} profit</span></div>
+          <span class="gain">${o.confidence > 0 ? `about ${fmt(o.total)} profit` : `<span class="warnmark">⚠ failed the checks</span> · ${fmt(o.qty * o.profitNow)} only if today's prices hold`}</span></div>
         ${steps(o, o.qty)}
         <div class="stats">
           <div><span>Cost each</span><b>${gp(o.unitCost)}</b></div>
-          <div><span>Profit each after tax</span><b>${gp(o.profit)} <small>(${(o.roi * 100).toFixed(1)}%)</small></b></div>
+          <div><span>Profit each, conservative</span><b>${gp(o.profit)} <small>(${(o.roi * 100).toFixed(1)}%)</small></b></div>
+          <div><span>If today's prices hold</span><b>${gp(o.profitNow)} <small>(${(o.roiNow * 100).toFixed(1)}%)</small></b></div>
           ${o.breakEven ? `<div><span>Break-even sell price</span><b>${gp(o.breakEven)}</b></div>` : ''}
           <div><span>Buying takes</span><b>${hoursText(o.buyHours)}</b></div>
           <div><span>Selling takes</span><b>${hoursText(o.sellHours)}</b></div>
@@ -252,26 +256,50 @@
       </article>`;
   }
 
-  function tiles(p, s) {
+  function tiles(p, s, rp) {
     const over = p.slots > s.slots;
+    const likely = rp ? [`${fmt(p.profit * rp.lo)} to ${fmt(p.profit * rp.hi)}`, 'likely profit after tax, from the replay'] : null;
     return `<div class="tiles">${[
-      [fmt(p.cost), `to spend of ${fmt(s.cash)}`], [fmt(Math.max(0, s.cash - p.cost)), 'left idle'], [fmt(p.profit), 'expected profit after tax'],
-      [p.cost ? ((p.profit / p.cost) * 100).toFixed(1) + '%' : '–', 'return on what you spend'],
+      [fmt(p.cost), `to spend of ${fmt(s.cash)}`], [fmt(Math.max(0, s.cash - p.cost)), 'left idle'],
+      likely, [fmt(p.profit), `profit if everything fills${p.cost ? ` (${((p.profit / p.cost) * 100).toFixed(1)}%)` : ''}`],
       [`${p.slots} of ${s.slots}`, over ? '⚠ slots needed to buy, more than you have free' : 'slots used to buy'],
-    ].map(t => `<div class="tile"><b>${t[0]}</b><span>${t[1]}</span></div>`).join('')}</div>`;
+    ].filter(Boolean).map(t => `<div class="tile"><b>${t[0]}</b><span>${t[1]}</span></div>`).join('')}</div>`;
   }
 
-  const FLOORS = [0, 5, 8, 12, 15];
+  /** What to do each time you come back. In the replay this routine was the difference between keeping
+      about three quarters of the profit and keeping under half. */
+  function routine() {
+    return `<details class="compare routine"><summary><b>What to do at each check-in</b> <span class="muted">(this roughly doubled the profit in the replay)</span></summary>
+      <ol>
+        <li>Pack or unpack whatever has filled and list it at the sell price this page shows <i>then</i>, not the one from earlier.</li>
+        <li>Move any buy offer that has not filled to the buy price shown then.</li>
+        <li>By your second check-in, cancel what still has not filled. If a set is short of one piece, look that piece up in Price check and buy it at "Buy right now" to finish the sets you have started.</li>
+        <li>Sell any spare pieces on their own at their Price check sell price.</li>
+      </ol></details>`;
+  }
+
+  const FLOORS = [5, 8, 12, 15];
+  // From scripts/backtest.js over 5-26 Nov 2026: across the cash, slot and check-in settings on this page,
+  // how much of the plan's headline profit the replay actually made, and how often a round lost money.
+  // `lo` assumes you catch a quarter of the market's flow, `hi` half. `lost` covers the same range.
+  const REPLAY = {
+    5: { lo: 0.5, hi: 0.7, lost: '1 in 10 to 1 in 20', worst: '2.3m to 3.7m' },
+    8: { lo: 0.55, hi: 0.8, lost: 'about 1 in 20', worst: '0.2m to 1.1m' },
+    12: { lo: 0.6, hi: 0.8, lost: 'about 1 in 30', worst: 'about 0.2m' },
+    15: { lo: 0.7, hi: 0.85, lost: 'about 1 in 50', worst: 'about 0.2m' },
+  };
+  const range = r => `${Math.round(r.lo * 100)}–${Math.round(r.hi * 100)}%`;
   /** What the plan would look like at each minimum return, so the idle-cash trade-off is visible. */
   function compare(s) {
     const rows = FLOORS.map(f => {
       const p = GE.plan(opps, Object.assign({}, s, { minRoi: f / 100 })), idle = Math.max(0, s.cash - p.cost), cur = f === +state.minRoi;
       return `<tr class="${cur ? 'cur' : ''}" data-act="floor" data-v="${f}" title="Use this minimum return">
-        <td>${f ? f + '%' : 'Any'}${cur ? ' <span class="cur-word">(current)</span>' : ''}</td><td class="num">${fmt(p.cost)}</td><td class="num">${fmt(idle)} (${Math.round((idle / s.cash) * 100)}%)</td>
-        <td class="num">${fmt(p.profit)}</td><td class="num">${p.cost ? ((p.profit / p.cost) * 100).toFixed(1) + '%' : '–'}</td></tr>`;
+        <td>${f}%${cur ? ' <span class="cur-word">(current)</span>' : ''}</td><td class="num">${fmt(p.cost)}</td><td class="num">${fmt(idle)} (${Math.round((idle / s.cash) * 100)}%)</td>
+        <td class="num">${fmt(p.profit)}</td><td class="num">${p.cost ? ((p.profit / p.cost) * 100).toFixed(1) + '%' : '–'}</td>
+        <td class="num">${range(REPLAY[f])} of it</td><td class="num">${REPLAY[f].lost}</td></tr>`;
     }).join('');
     return `<details class="compare" open><summary>Tune it: minimum return against idle cash <span class="muted">(click a row to use it)</span></summary>
-      <table class="compare"><thead><tr><th>Minimum return</th><th>Cash working</th><th>Left idle</th><th>Profit</th><th>Return</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+      <table class="compare"><thead><tr><th>Minimum return</th><th>Cash working</th><th>Left idle</th><th>Profit</th><th>Return</th><th title="How much of the profit figure a three-week replay of past prices actually made">Replay made</th><th title="How often a round lost money in that replay">Rounds lost</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
 
   function nameOf(key) {
@@ -290,9 +318,11 @@
         ? `${esc(u.o.title)} got nothing: there is not enough cash left for one (${fmt(u.o.unitCost)} each).`
         : `${esc(u.o.title)} got nothing: it trades too rarely to finish between check-ins.`));
       p.missing.forEach(k => notes.push(`${esc(nameOf(k))} is ticked but its gap has closed, so there is nothing to do there right now.`));
+      const failed = p.picks.filter(o => o.confidence === 0).length;
+      if (failed) notes.push(`${failed} of your picks failed the checks. In the replay, trades that failed lost money more than 4 times in 10 and lost overall, so the profit shown for them is not counted.`);
       if (p.slots > s.slots) notes.push(`These picks need ${p.slots} slots to buy and you entered ${s.slots}. Start the ones at the top and add the rest as slots free up.`);
       el.innerHTML = `<p class="mode"><b>Built from the ${n} option${n === 1 ? '' : 's'} you ticked</b>, with cash going to the highest return first. The minimum return is not applied to your own picks. <button class="link" data-act="clear-picks">Back to the automatic plan</button></p>
-        ${p.picks.length ? tiles(p, s) : ''}${notes.length ? `<ul class="flags" style="margin:0 0 12px">${notes.map(x => `<li class="warn">${x}</li>`).join('')}</ul>` : ''}
+        ${p.picks.length ? tiles(p, s, p.picks.every(o => o.confidence > 0) ? { lo: 0.5, hi: 0.8 } : null) : ''}${notes.length ? `<ul class="flags" style="margin:0 0 12px">${notes.map(x => `<li class="warn">${x}</li>`).join('')}</ul>` : ''}
         ${p.picks.map(o => card(o, true)).join('')}`;
       return;
     }
@@ -302,7 +332,8 @@
       return;
     }
     const left = s.cash - p.cost;
-    el.innerHTML = `${tiles(p, s)}${p.picks.map(o => card(o, false)).join('')}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}${compare(s)}`;
+    const rp = REPLAY[state.minRoi] || REPLAY[5];
+    el.innerHTML = `${tiles(p, s, rp)}<p class="replay-note">Replayed against three weeks of real trades, plans at this ${state.minRoi}% setting made <b>${range(rp)}</b> of the all-fills figure. A round lost money ${rp.lost} times, and the worst lost ${rp.worst}. <button class="link" data-act="how">How it was tested</button></p>${routine()}${p.picks.map(o => card(o, false)).join('')}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}${compare(s)}`;
   }
 
   // ---- Every option --------------------------------------------------------------
@@ -310,15 +341,18 @@
     const s = settings(), cash = s.cash || 0;
     seg($('#filter'), [{ v: 'all', t: 'All' }, { v: 'pack', t: 'Packing' }, { v: 'unpack', t: 'Unpacking' }, { v: 'flip', t: 'Flips' }, { v: 'weak', t: 'Failed checks' }], state.filter,
       v => { state.filter = v; shown = 40; save(); renderList(); });
-    let list = GE.sized(opps, { cash: cash || Infinity, hours: s.hours }).filter(o => !s.hidden.has(o.key) && o.capTotal >= MIN_ROUND);
+    let list = GE.sized(opps, { cash: cash || Infinity, hours: s.hours }).filter(o => !s.hidden.has(o.key) && o.cap * o.profitNow >= MIN_ROUND);
     list = state.filter === 'weak' ? list.filter(o => o.confidence === 0) : list.filter(o => o.confidence > 0 && (state.filter === 'all' || o.type === state.filter));
     const picks = new Set(state.picks), sort = state.sort, col = COLS.find(c => c.k === sort.col) || COLS[6];
     list.forEach(o => {
-      o.low = o.roi < s.minRoi;
-      o.fits = o.qty >= 1 && o.slots <= s.slots && !o.low;
+      const failed = o.confidence === 0;                       // failed rows show today's gap, since nothing is counted for them
+      o.low = !failed && o.roi < s.minRoi;
+      o.fits = !failed && o.qty >= 1 && o.slots <= s.slots && !o.low;
       o.vol = Math.min(o.buyPerDay, o.sellPerDay);
+      o.shownProfit = failed ? o.profitNow : o.profit;
+      o.shownRoi = failed ? o.roiNow : o.roi;
       o.shownQty = o.fits ? o.qty : o.cap;
-      o.shownTotal = o.fits ? o.total : o.capTotal;
+      o.shownTotal = failed ? o.cap * o.profitNow : o.fits ? o.total : o.capTotal;
       o.picked = picks.has(o.key);
     });
     // Ticked rows stay on top. The default order also keeps what fits you above what does not.
@@ -331,7 +365,7 @@
     });
     const max = Math.max(1, ...list.map(o => (o.fits ? o.total : 0)));
     $('#list-note').textContent = state.filter === 'weak'
-      ? 'These show a gap right now but failed a check, so they are never put in your plan.'
+      ? 'These show a gap at today\'s prices but failed a check, so they are never put in your plan. In a three-week replay they lost money more than 4 times in 10, and lost overall. The figures here assume today\'s prices hold.'
       : `Tick options to build the plan from your own picks. Tap an option for its offers and evidence. Greyed options do not fit the cash, slots or minimum return you entered.`;
     const rows = list.slice(0, shown).map(o => {
       const need = o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : o.low ? `below your ${state.minRoi}% minimum return` : '';
@@ -340,7 +374,7 @@
       return `<tr class="row${o.fits ? '' : ' dim'}${isOpen ? ' open' : ''}${o.picked ? ' picked' : ''}" data-act="toggle" data-key="${o.key}">
           <td class="tickcell" data-act="select" data-key="${o.key}"><input type="checkbox" ${o.picked ? 'checked' : ''} aria-label="Use ${esc(o.title)} in my plan"></td>
           <td class="namecol"><div class="name-cell"><button class="rowbtn" aria-expanded="${isOpen}"><span class="caret">${isOpen ? '▾' : '▸'}</span><span class="kind">${KIND[o.type]}</span>${esc(o.name)}${warn}</button>${need ? `<span class="why">${need}</span>` : ''}</div></td>
-          <td class="r num" data-label="Slots">${o.slots}</td><td class="r num" data-label="Cost each">${fmt(o.unitCost)}</td><td class="r num" data-label="Profit each">${fmt(o.profit)}</td><td class="r num" data-label="Return">${(o.roi * 100).toFixed(1)}%</td>
+          <td class="r num" data-label="Slots">${o.slots}</td><td class="r num" data-label="Cost each">${fmt(o.unitCost)}</td><td class="r num" data-label="Profit each">${fmt(o.shownProfit)}</td><td class="r num" data-label="Return">${(o.shownRoi * 100).toFixed(1)}%</td>
           <td class="r num" data-label="Volume per day">${gp(o.vol)}<span class="sub">${fmt(o.vol * o.unitCost)} gp</span></td>
           <td class="r num" data-label="Quantity">${gp(o.shownQty)}</td>
           <td class="bar-cell" data-label="Profit this round"><div class="bar"><i style="width:${o.fits ? Math.max(1, (o.total / max) * 60) : 0}%"></i><span class="num">${fmt(o.shownTotal)}</span></div></td>
@@ -427,7 +461,7 @@
     $('#cash-read').textContent = s.cash ? `= ${gp(s.cash)} gp` : 'Type an amount like 46m or 800k';
     seg($('#slots'), [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ v: String(n), t: String(n) })), String(state.slots), v => { state.slots = +v; save(); render(); });
     seg($('#hours'), [4, 8, 12].map(n => ({ v: String(n), t: n + ' hours' })), String(state.hours), v => { state.hours = +v; save(); render(); });
-    seg($('#minroi'), [0, 5, 8, 12, 15].map(n => ({ v: String(n), t: n ? n + '%' : 'Any' })), String(state.minRoi), v => { state.minRoi = +v; save(); render(); });
+    seg($('#minroi'), [5, 8, 12, 15].map(n => ({ v: String(n), t: n + '%' })), String(state.minRoi), v => { state.minRoi = +v; save(); render(); });
     renderPlan(s);
     renderList();
     if (state.tab === 'check' || picked !== null) renderCheck();
