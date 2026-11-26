@@ -233,18 +233,22 @@
         <div class="card-head"><h3><span class="kind">${KIND[o.type]}</span>${esc(o.name)} × ${gp(o.qty)}</h3>
           <span class="gain">about ${fmt(o.total)} profit</span></div>
         ${steps(o, o.qty)}
-        <div class="facts">
-          <span>Cost each <b>${gp(o.unitCost)}</b></span><span>Profit each after tax <b>${gp(o.profit)}</b> (${(o.roi * 100).toFixed(1)}%)</span>
-          ${o.breakEven ? `<span>Break-even sell price <b>${gp(o.breakEven)}</b></span>` : ''}
-          <span>Buying takes <b>${hoursText(o.buyHours)}</b></span><span>Selling takes <b>${hoursText(o.sellHours)}</b></span>
-          <span>Volume per day <b>${gp(Math.min(o.buyPerDay, o.sellPerDay))}</b></span>
-          <span>Gap confirmed in ${dots(o)} time windows</span>
+        <div class="stats">
+          <div><span>Cost each</span><b>${gp(o.unitCost)}</b></div>
+          <div><span>Profit each after tax</span><b>${gp(o.profit)} <small>(${(o.roi * 100).toFixed(1)}%)</small></b></div>
+          ${o.breakEven ? `<div><span>Break-even sell price</span><b>${gp(o.breakEven)}</b></div>` : ''}
+          <div><span>Buying takes</span><b>${hoursText(o.buyHours)}</b></div>
+          <div><span>Selling takes</span><b>${hoursText(o.sellHours)}</b></div>
+          <div><span>Volume per day</span><b>${gp(Math.min(o.buyPerDay, o.sellPerDay))}</b></div>
+          <div><span>Gap confirmed</span><b>${dots(o)}</b></div>
         </div>
         ${flags(o)}
-        <details><summary class="link" style="display:inline-block;margin-top:12px">Show the evidence</summary>${detail(o)}</details>
-        <div class="card-foot">${manual
-          ? `<button class="link" data-act="select" data-key="${o.key}">Remove from my picks</button>`
-          : `<button class="link" data-act="hide" data-key="${o.key}">Hide this (already doing it, or not interested)</button>`}</div>
+        <details class="evidence"><summary>
+          <span class="link">Show the evidence</span>
+          ${manual
+            ? `<button class="link" data-act="select" data-key="${o.key}">Remove from my picks</button>`
+            : `<button class="link" data-act="hide" data-key="${o.key}" title="Use this if you are already doing it or are not interested">Hide this option</button>`}
+        </summary>${detail(o)}</details>
       </article>`;
   }
 
@@ -263,11 +267,11 @@
     const rows = FLOORS.map(f => {
       const p = GE.plan(opps, Object.assign({}, s, { minRoi: f / 100 })), idle = Math.max(0, s.cash - p.cost), cur = f === +state.minRoi;
       return `<tr class="${cur ? 'cur' : ''}" data-act="floor" data-v="${f}" title="Use this minimum return">
-        <td>${f ? f + '%' : 'Any'}${cur ? ' (current)' : ''}</td><td class="num">${fmt(p.cost)}</td><td class="num">${fmt(idle)} (${Math.round((idle / s.cash) * 100)}%)</td>
+        <td>${f ? f + '%' : 'Any'}${cur ? ' <span class="cur-word">(current)</span>' : ''}</td><td class="num">${fmt(p.cost)}</td><td class="num">${fmt(idle)} (${Math.round((idle / s.cash) * 100)}%)</td>
         <td class="num">${fmt(p.profit)}</td><td class="num">${p.cost ? ((p.profit / p.cost) * 100).toFixed(1) + '%' : '–'}</td></tr>`;
     }).join('');
-    return `<details class="compare" open><summary>How the minimum return trades off against idle cash (click a row to use it)</summary>
-      <table class="compare"><thead><tr><th>Minimum return</th><th>Cash working</th><th>Left idle</th><th>Expected profit</th><th>Return on spend</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+    return `<details class="compare" open><summary>Tune it: minimum return against idle cash <span class="muted">(click a row to use it)</span></summary>
+      <table class="compare"><thead><tr><th>Minimum return</th><th>Cash working</th><th>Left idle</th><th>Profit</th><th>Return</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
 
   function nameOf(key) {
@@ -298,7 +302,7 @@
       return;
     }
     const left = s.cash - p.cost;
-    el.innerHTML = `${tiles(p, s)}${compare(s)}${p.picks.map(o => card(o, false)).join('')}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}`;
+    el.innerHTML = `${tiles(p, s)}${p.picks.map(o => card(o, false)).join('')}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}${compare(s)}`;
   }
 
   // ---- Every option --------------------------------------------------------------
@@ -328,26 +332,31 @@
     const max = Math.max(1, ...list.map(o => (o.fits ? o.total : 0)));
     $('#list-note').textContent = state.filter === 'weak'
       ? 'These show a gap right now but failed a check, so they are never put in your plan.'
-      : `Sized for ${cash ? fmt(cash) : 'any amount of'} cash and a check-in every ${s.hours} hours. Click a column heading to sort, and tick options to build the plan from your own picks. Greyed rows need more slots or cash than you entered${s.minRoi ? `, or return less than your ${state.minRoi}% minimum` : ''}. Click a row for the evidence.`;
+      : `Tick options to build the plan from your own picks. Tap an option for its offers and evidence. Greyed options do not fit the cash, slots or minimum return you entered.`;
     const rows = list.slice(0, shown).map(o => {
       const need = o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : o.low ? `below your ${state.minRoi}% minimum return` : '';
-      const warn = o.flags.some(f => f.level === 'warn') ? ' <span title="See the notes in the detail" style="color:var(--warn)">⚠</span>' : '';
+      const warn = o.flags.some(f => f.level === 'warn') ? '&nbsp;<span class="warnmark" title="Has a warning: open it to read why">⚠</span>' : '';
       const isOpen = open.has(o.key);
       return `<tr class="row${o.fits ? '' : ' dim'}${isOpen ? ' open' : ''}${o.picked ? ' picked' : ''}" data-act="toggle" data-key="${o.key}">
           <td class="tickcell" data-act="select" data-key="${o.key}"><input type="checkbox" ${o.picked ? 'checked' : ''} aria-label="Use ${esc(o.title)} in my plan"></td>
-          <td><div class="name-cell"><span><span class="caret">${isOpen ? '▾' : '▸'}</span><span class="kind">${KIND[o.type]}</span>${esc(o.name)}${warn}</span>${need ? `<span class="why">${need}</span>` : ''}</div></td>
-          <td class="r num">${o.slots}</td><td class="r num">${fmt(o.unitCost)}</td><td class="r num">${fmt(o.profit)}</td><td class="r num">${(o.roi * 100).toFixed(1)}%</td>
-          <td class="r num">${gp(o.vol)}<span class="sub">${fmt(o.vol * o.unitCost)} gp</span></td>
-          <td class="r num">${gp(o.shownQty)}</td>
-          <td class="bar-cell"><div class="bar"><i style="width:${o.fits ? Math.max(1, (o.total / max) * 60) : 0}%"></i><span class="num">${fmt(o.shownTotal)}</span></div></td>
-          <td>${dots(o)}</td></tr>${isOpen ? `<tr><td class="detail" colspan="10">${steps(o, o.shownQty)}${flags(o)}${detail(o)}
-          <div class="card-foot"><button class="link" data-act="hide" data-key="${o.key}">Hide this</button></div></td></tr>` : ''}`;
+          <td class="namecol"><div class="name-cell"><button class="rowbtn" aria-expanded="${isOpen}"><span class="caret">${isOpen ? '▾' : '▸'}</span><span class="kind">${KIND[o.type]}</span>${esc(o.name)}${warn}</button>${need ? `<span class="why">${need}</span>` : ''}</div></td>
+          <td class="r num" data-label="Slots">${o.slots}</td><td class="r num" data-label="Cost each">${fmt(o.unitCost)}</td><td class="r num" data-label="Profit each">${fmt(o.profit)}</td><td class="r num" data-label="Return">${(o.roi * 100).toFixed(1)}%</td>
+          <td class="r num" data-label="Volume per day">${gp(o.vol)}<span class="sub">${fmt(o.vol * o.unitCost)} gp</span></td>
+          <td class="r num" data-label="Quantity">${gp(o.shownQty)}</td>
+          <td class="bar-cell" data-label="Profit this round"><div class="bar"><i style="width:${o.fits ? Math.max(1, (o.total / max) * 60) : 0}%"></i><span class="num">${fmt(o.shownTotal)}</span></div></td>
+          <td class="gapcol" data-label="Gap confirmed">${dots(o)}</td></tr>${isOpen ? `<tr class="detail-row"><td class="detail" colspan="10"><div class="detail-inner">${steps(o, o.shownQty)}${flags(o)}${detail(o)}
+          <div class="card-foot"><button class="link" data-act="hide" data-key="${o.key}">Hide this option</button></div></div></td></tr>` : ''}`;
     }).join('');
     const heads = COLS.map(c => {
       const on = c.k === col.k;
       return `<th class="${c.r ? 'r' : ''}"${on ? ` aria-sort="${sort.dir === 'desc' ? 'descending' : 'ascending'}"` : ''}><button class="th" data-act="sort" data-col="${c.k}" title="${esc(c.tip || 'Sort by ' + c.t.toLowerCase())}">${esc(c.t)}<span class="arrow">${on ? (sort.dir === 'desc' ? '▼' : '▲') : ''}</span></button></th>`;
     }).join('');
-    $('#opts').innerHTML = `<thead><tr><th><span class="sr">Use in my plan</span></th>${heads}</tr></thead>
+    const SORTS = [['total:desc', 'Most profit this round'], ['roi:desc', 'Highest return'], ['vol:desc', 'Highest volume'], ['profit:desc', 'Most profit each'], ['cost:asc', 'Cheapest each'], ['cost:desc', 'Most expensive each'], ['slots:asc', 'Fewest slots'], ['name:asc', 'Name, A to Z']];
+    const curSort = sort.col + ':' + sort.dir, sel = $('#sortsel');
+    sel.innerHTML = (SORTS.some(x => x[0] === curSort) ? SORTS : SORTS.concat([[curSort, `${col.t}, ${sort.dir === 'desc' ? 'high to low' : 'low to high'}`]]))
+      .map(x => `<option value="${x[0]}"${x[0] === curSort ? ' selected' : ''}>${esc(x[1])}</option>`).join('');
+    sel.onchange = () => { const [c, d] = sel.value.split(':'); state.sort = { col: c, dir: d }; shown = 40; save(); renderList(); };
+    $('#opts').innerHTML = `<thead><tr><th><span class="pickhead">Pick</span></th>${heads}</tr></thead>
       <tbody>${rows || '<tr><td colspan="10" class="muted">Nothing to show for this filter.</td></tr>'}</tbody>`;
     $('#more').innerHTML = list.length > shown ? `<button class="link" data-act="more">Show more (${list.length - shown} left)</button>` : '';
     const names = state.hidden.map(k => { const o = opps.find(x => x.key === k); return o ? `<button class="link" data-act="unhide" data-key="${k}">${esc(o.title)}</button>` : ''; }).filter(Boolean);

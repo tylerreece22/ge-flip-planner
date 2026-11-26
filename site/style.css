@@ -34,7 +34,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 17px; margin: 28px 0 10px; }
 h3 { font-size: 15px; margin: 18px 0 6px; }
@@ -53,14 +53,15 @@ small, .small { font-size: 12.5px; color: var(--text-2); }
 
 .banner { margin: 14px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--text); border: 1px solid var(--line); }
 
-.inputs, .check-inputs { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 16px; }
+.inputs, .check-inputs { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 16px; }
 .field { display: flex; flex-direction: column; gap: 5px; border: 0; padding: 0; margin: 0; min-width: 0; }
 .field.grow { flex: 1 1 260px; }
 .field > span, .field > legend { font-size: 12.5px; color: var(--text-2); padding: 0; }
 input:not([type="checkbox"]) { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; width: 130px; }
 .field.grow input { width: 100%; }
 input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.tick { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; }
+.ticks { display: flex; flex-wrap: wrap; gap: 6px 16px; padding-top: 6px; }
+.tick { display: inline-flex; gap: 6px; align-items: center; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--bg); }
 .seg button { font: inherit; color: var(--text-2); background: none; border: 0; padding: 7px 10px; cursor: pointer; min-width: 34px; }
 .seg button + button { border-left: 1px solid var(--line); }
@@ -86,6 +87,14 @@ table.offers td.act { color: var(--text-2); width: 44px; }
 table.offers td.num { text-align: right; padding-left: 12px; padding-right: 0; }
 @media (max-width: 520px) { .top { position: static; } table.offers td.act { width: 36px; } }
 table.offers td.price { font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.stats > div > span { display: block; font-size: 12px; color: var(--text-2); }
+.stats b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.stats small { font-weight: 400; }
+details.evidence { margin-top: 12px; }
+details.evidence > summary { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 18px; cursor: pointer; }
+details.evidence > summary::-webkit-details-marker { display: none; }
+details.evidence[open] > summary > .link:first-child { color: var(--text); }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 13.5px; color: var(--text-2); }
 .facts b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .flags { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13.5px; }
@@ -100,6 +109,13 @@ table.offers td.price { font-weight: 600; }
 
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
 .list-head h2 { margin: 0; }
+.list-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.sortsel { display: none; font-size: 13.5px; color: var(--text-2); }
+.sortsel select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; margin-left: 4px; max-width: 100%; }
+.pickhead { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.rowbtn { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.warnmark { color: var(--warn); }
+.detail-inner { position: sticky; left: 14px; width: calc(100cqw - 30px); max-width: 1140px; }
 table.opts th button.th { font: inherit; font-weight: 600; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
 table.opts th button.th:hover, table.opts th[aria-sort] button.th { color: var(--text); }
 table.opts th .arrow { display: inline-block; width: 12px; font-size: 9px; text-align: center; vertical-align: 1px; }
@@ -110,9 +126,9 @@ table.opts tr.picked td { background: color-mix(in srgb, var(--accent) 9%, trans
 .mode b { color: var(--text); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 #list-note { margin: 6px 0 10px; font-size: 13.5px; }
-.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
-table.opts { border-collapse: collapse; width: 100%; min-width: 1000px; }
-table.opts td:nth-child(2) { min-width: 230px; }
+.table-wrap { container-type: inline-size; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table.opts { border-collapse: collapse; width: 100%; }
+table.opts td.namecol { min-width: 230px; }
 table.opts th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--text-2); padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 table.opts td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 table.opts tr:last-child td { border-bottom: 0; }
@@ -136,7 +152,7 @@ table.compare tbody tr { cursor: pointer; }
 table.compare tbody tr:hover td { background: var(--bg); }
 table.compare tr.cur td { font-weight: 600; background: color-mix(in srgb, var(--accent) 9%, transparent); }
 table.compare tr.cur td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
-.bar-cell { min-width: 190px; }
+.bar-cell { min-width: 170px; }
 .bar { display: flex; align-items: center; gap: 8px; }
 .bar i { display: block; height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); min-width: 2px; }
 .dim .bar i { background: var(--text-3); }
@@ -144,7 +160,7 @@ table.compare tr.cur td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .dots i { width: 9px; height: 9px; border-radius: 2px; background: var(--chip); border: 1px solid var(--line); }
 .dots i.y { background: var(--good); border-color: var(--good); }
 .dots i.n { background: var(--bad); border-color: var(--bad); }
-.caret { display: inline-block; width: 12px; color: var(--text-3); }
+.caret { display: inline-block; width: 15px; color: var(--text-2); font-size: 13px; }
 
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 18px; margin-top: 12px; }
 @media (max-width: 760px) { .detail-grid { grid-template-columns: 1fr; } }
@@ -173,7 +189,7 @@ table.mini td.num { text-align: right; padding-right: 0; }
 #suggest { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 #suggest button { font: inherit; font-size: 13.5px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; cursor: pointer; }
 #check .card { margin-top: 14px; }
-.big-prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
+.big-prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
 .big-prices div { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
 .big-prices b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
 .big-prices span { font-size: 12.5px; color: var(--text-2); }
@@ -181,3 +197,40 @@ table.mini td.num { text-align: right; padding-right: 0; }
 .prose li { margin: 4px 0; }
 #hidden { margin: 14px 0 40px; font-size: 13.5px; color: var(--text-2); }
 #more { margin-top: 10px; }
+
+/* ---- Narrow windows: the option table becomes a stack of cards ----------------
+   The full table needs about 1130px, so anything narrower gets cards instead of a sideways scroll. */
+@media (max-width: 1159px) {
+  .sortsel { display: block; }
+  .table-wrap { overflow: visible; background: none; border: 0; border-radius: 0; container-type: normal; }
+  table.opts, table.opts tbody { display: block; min-width: 0; width: 100%; }
+  table.opts thead { display: none; }
+  table.opts tr.row { display: grid; grid-template-columns: 30px repeat(6, minmax(0, 1fr)); gap: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 8px; }
+  table.opts tr.row.open { border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
+  table.opts tr.row td { display: block; padding: 0; border: 0; text-align: left; min-width: 0; background: none !important; }
+  table.opts tr.row.picked { border-color: var(--accent); }
+  table.opts tr.row td.tickcell { grid-row: 1 / span 4; width: auto; }
+  table.opts tr.row td.namecol { grid-column: 2 / -1; min-width: 0; font-weight: 600; }
+  table.opts tr.row td[data-label]::before { content: attr(data-label); display: block; font-size: 11.5px; font-weight: 400; color: var(--text-3); }
+  table.opts tr.row td.bar-cell { grid-column: 2 / span 4; min-width: 0; }
+  table.opts tr.row td.gapcol { grid-column: span 2; }
+  table.opts tr.detail-row { display: block; margin-bottom: 8px; }
+  table.opts td.detail { display: block; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; padding: 0 12px 14px; }
+  .detail-inner { position: static; width: auto; }
+}
+/* ---- Phones ---------------------------------------------------------------- */
+@media (max-width: 599px) {
+  table.opts tr.row { grid-template-columns: 30px repeat(3, minmax(0, 1fr)); }
+  table.opts tr.row td.bar-cell { grid-column: 2 / span 2; }
+  table.opts tr.row td.gapcol { grid-column: auto; }
+  .list-head { align-items: flex-start; flex-direction: column; }
+  .seg { flex-wrap: wrap; }
+  .inputs { gap: 12px 16px; padding: 12px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .status { text-align: left; }
+  details.compare { padding: 10px; overflow-x: auto; }
+  table.compare { font-size: 12.5px; }
+  table.compare th { white-space: normal; vertical-align: bottom; }
+  table.compare th, table.compare td { padding-left: 6px; }
+  table.compare .cur-word { display: none; }
+}

@@ -44,18 +44,23 @@
       </div>
       <fieldset class="field">
         <legend>Include</legend>
+        <div class="ticks">
         <label class="tick"><input type="checkbox" data-type="pack"> Packing sets</label>
         <label class="tick"><input type="checkbox" data-type="unpack"> Unpacking sets</label>
         <label class="tick"><input type="checkbox" data-type="flip"> Plain flips</label>
+        </div>
       </fieldset>
     </form>
 
     <h2>Your plan</h2>
-    <div id="plan"></div>
+    <div id="plan"><div class="empty">Loading live prices…</div></div>
 
     <div class="list-head">
       <h2>Every option</h2>
-      <div class="seg" id="filter" role="radiogroup" aria-label="Show"></div>
+      <div class="list-controls">
+        <label class="sortsel">Sort by <select id="sortsel"></select></label>
+        <div class="seg" id="filter" role="radiogroup" aria-label="Show"></div>
+      </div>
     </div>
     <p class="muted" id="list-note"></p>
     <div class="table-wrap"><table class="opts" id="opts"></table></div>
