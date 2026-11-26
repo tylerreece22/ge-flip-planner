@@ -1,0 +1,335 @@
+/* Page behaviour for the GE flip planner. All trade maths lives in core.js. */
+(function () {
+  'use strict';
+  const API = 'https://prices.runescape.wiki/api/v1/osrs/latest';
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const { fmt, gp } = GE;
+  const KIND = { pack: 'Pack', unpack: 'Unpack', flip: 'Flip' };
+  const MIN_ROUND = 50000;      // options that cannot make this much in one round are noise
+  const WINDOWS = ['Last 4 hours', '4–12 hours ago', '12–24 hours ago'];
+
+  // ---- Settings remembered on this device only ---------------------------------
+  const defaults = { cash: '36m', slots: 3, hours: 8, types: { pack: true, unpack: true, flip: true }, hidden: [], tab: 'buy', filter: 'all' };
+  let state = Object.assign({}, defaults);
+  try { Object.assign(state, JSON.parse(localStorage.getItem('ge-flips') || '{}')); } catch (e) { /* private window: fine */ }
+  state.types = Object.assign({}, defaults.types, state.types);
+  const save = () => { try { localStorage.setItem('ge-flips', JSON.stringify(state)); } catch (e) { /* ignore */ } };
+
+  let data = null, model = null, opps = [], liveError = false, shown = 40, picked = null;
+  const open = new Set();
+
+  // ---- Loading -------------------------------------------------------------------
+  async function boot() {
+    wire();
+    try {
+      data = await (await fetch('data.json?t=' + Math.floor(Date.now() / 60000), { cache: 'no-store' })).json();
+    } catch (e) {
+      $('#status').textContent = 'Could not load the price data.';
+      $('#plan').innerHTML = '<div class="empty">The price data file did not load. Try again in a minute.</div>';
+      return;
+    }
+    await refresh();
+    setInterval(() => { if (!document.hidden) refresh(); }, 10 * 60 * 1000);
+    setInterval(status, 30 * 1000);
+  }
+
+  async function refresh() {
+    const now = Math.floor(Date.now() / 1000);
+    model = GE.load(data, now);
+    try {
+      const live = await (await fetch(API, { cache: 'no-store' })).json();
+      GE.applyLive(model, live.data, now);
+      liveError = false;
+    } catch (e) { liveError = true; }
+    opps = GE.opportunities(model);
+    render();
+  }
+
+  const ago = s => (s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 172800 ? Math.round(s / 3600) + ' hours ago' : Math.round(s / 86400) + ' days ago');
+
+  function status() {
+    if (!model) return;
+    const now = Date.now() / 1000;
+    const prices = liveError ? `Live prices unavailable, using prices from ${ago(now - model.generated)}` : `Prices live, checked ${ago(now - model.pricesAt)}`;
+    $('#status').innerHTML = `${esc(prices)} · history rebuilt ${esc(ago(now - model.generated))} · <button id="reload">Refresh</button>`;
+    const age = now - model.generated;
+    $('#banner').innerHTML = age > 9 * 3600
+      ? `<div class="banner">⚠ The price history behind these checks is ${esc(ago(age).replace(' ago', ''))} old, so the scheduled update has missed a run. Live prices are still current, but treat the picks with more care.</div>` : '';
+  }
+
+  // ---- Controls ------------------------------------------------------------------
+  function seg(el, options, value, onPick) {
+    el.innerHTML = options.map(o => `<button type="button" role="radio" aria-checked="${o.v === value}" data-v="${esc(o.v)}">${esc(o.t)}</button>`).join('');
+    el.onclick = e => { const b = e.target.closest('button'); if (b) onPick(b.dataset.v); };
+  }
+
+  function wire() {
+    $('#cash').value = state.cash;
+    $('#cash').addEventListener('input', e => { state.cash = e.target.value; save(); render(); });
+    document.querySelectorAll('[data-type]').forEach(c => {
+      c.checked = !!state.types[c.dataset.type];
+      c.addEventListener('change', () => { state.types[c.dataset.type] = c.checked; save(); render(); });
+    });
+    document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { state.tab = b.dataset.tab; save(); tabs(); }));
+    document.addEventListener('click', e => {
+      const t = e.target.closest('[data-act]');
+      if (e.target.id === 'reload') { refresh(); return; }
+      if (!t) return;
+      const k = t.dataset.key, act = t.dataset.act;
+      if (act === 'hide') { state.hidden.push(k); save(); render(); }
+      else if (act === 'unhide') { state.hidden = state.hidden.filter(x => x !== k); save(); render(); }
+      else if (act === 'unhide-all') { state.hidden = []; save(); render(); }
+      else if (act === 'toggle') { open.has(k) ? open.delete(k) : open.add(k); renderList(); }
+      else if (act === 'more') { shown += 40; renderList(); }
+      else if (act === 'pick') { picked = +t.dataset.id; $('#q').value = model.items.get(picked).name; renderCheck(); }
+      else if (act === 'check') { picked = +t.dataset.id; state.tab = 'check'; save(); tabs(); $('#q').value = model.items.get(picked).name; renderCheck(); window.scrollTo(0, 0); }
+    });
+    ['q', 'paid', 'qty'].forEach(id => $('#' + id).addEventListener('input', () => { if (id === 'q') picked = null; renderCheck(); }));
+    document.addEventListener('mousemove', hover);
+    document.addEventListener('touchstart', hover, { passive: true });
+    window.addEventListener('scroll', () => { $('#tip').hidden = true; }, { passive: true });
+    tabs();
+  }
+
+  function tabs() {
+    document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === state.tab));
+    ['buy', 'check', 'how'].forEach(t => { $('#tab-' + t).hidden = t !== state.tab; });
+    $('#tip').hidden = true;
+  }
+
+  // ---- Shared pieces -------------------------------------------------------------
+  const itemLink = (id, name) => `<a href="https://prices.runescape.wiki/osrs/item/${id}" target="_blank" rel="noopener">${esc(name)}</a>`;
+  const hoursText = h => (!isFinite(h) ? 'unknown' : h < 1 ? 'under an hour' : h <= 36 ? `about ${Math.round(h)} hour${Math.round(h) === 1 ? '' : 's'}` : 'over a day');
+  const signed = n => `<span class="${n > 0 ? 'pos' : 'negv'}">${n > 0 ? '+' : ''}${gp(n)}</span>`;
+
+  function offers(rows, act, qty) {
+    return `<table class="offers">${rows.map(r => `<tr><td class="act">${act}</td><td>${itemLink(r.id, r.name)}</td><td class="num">× ${gp(qty * r.per)}</td><td class="num price">${gp(r.price)} each</td></tr>`).join('')}</table>`;
+  }
+
+  function steps(o, qty) {
+    const s = [];
+    if (o.type === 'pack') {
+      s.push(`Place these buy offers.${offers(o.buys, 'Buy', qty)}`);
+      s.push('Collect the pieces, right-click a Grand Exchange clerk, choose Sets, and pack them.');
+      s.push(`Sell the sets.${offers(o.sells, 'Sell', qty)}`);
+    } else if (o.type === 'unpack') {
+      s.push(`Buy the sets. This price should fill almost at once.${offers(o.buys, 'Buy', qty)}`);
+      s.push('Right-click a Grand Exchange clerk, choose Sets, and unpack them.');
+      s.push(`Sell the pieces. They can share one slot, one after another.${offers(o.sells, 'Sell', qty)}`);
+    } else {
+      s.push(`Place the buy offer.${offers(o.buys, 'Buy', qty)}`);
+      s.push(`When it fills, sell.${offers(o.sells, 'Sell', qty)}`);
+    }
+    return `<ol class="steps">${s.map(x => `<li>${x}</li>`).join('')}</ol>`;
+  }
+
+  function flags(o) {
+    return o.flags.length ? `<ul class="flags">${o.flags.map(f => `<li class="${f.level}">${esc(f.text)}</li>`).join('')}</ul>` : '';
+  }
+
+  function dots(o) {
+    const label = o.windows.map((w, i) => `${WINDOWS[i]}: ${w === null ? 'too few trades' : gp(w)}`).join('\n');
+    return `<span class="dots" title="${esc(label)}">${o.windows.map(w => `<i class="${w === null ? '' : w > 0 ? 'y' : 'n'}"></i>`).join('')}</span> <span class="small">${o.pos}/3</span>`;
+  }
+
+  function chart(o) {
+    const A = o.chart.a.days, B = o.chart.b.days, n = A.length;
+    const vals = A.concat(B).filter(v => v > 0);
+    if (vals.length < 6) return '<p class="muted small">Not enough daily history for a chart.</p>';
+    let min = Math.min(...vals), max = Math.max(...vals);
+    const pad = (max - min) * 0.15 || max * 0.02; min -= pad; max += pad;
+    const W = 560, H = 210, L = 8, R = 96, T = 10, Bm = 24;
+    const x = i => L + ((W - L - R) * i) / (n - 1), y = v => T + (H - T - Bm) * (1 - (v - min) / (max - min));
+    const line = s => { let d = '', pen = false; s.forEach((v, i) => { if (v > 0) { d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true; } else pen = false; }); return d; };
+    const day = i => new Date((model.generated - (n - i) * 86400) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const lastIdx = s => { for (let i = n - 1; i >= 0; i--) if (s[i] > 0) return i; return -1; };
+    const ia = lastIdx(A), ib = lastIdx(B);
+    let ya = y(A[ia]), yb = y(B[ib]);
+    if (Math.abs(ya - yb) < 26) { const mid = (ya + yb) / 2, up = ya <= yb ? -13 : 13; ya = mid + up; yb = mid - up; }
+    const grid = [0.1, 0.5, 0.9].map(f => { const v = min + (max - min) * f; return `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L + 2}" y="${y(v) - 3}">${fmt(v)}</text>`; }).join('');
+    const pts = JSON.stringify({ a: A, b: B, la: o.chart.a.label, lb: o.chart.b.label, days: A.map((_, i) => day(i)), L, R, W });
+    return `<div class="legend"><span><i class="a"></i>${esc(o.chart.a.label)}</span><span><i class="b"></i>${esc(o.chart.b.label)}</span><span>daily average, last ${n} days</span></div>
+      <div class="chart" data-pts="${esc(pts)}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.chart.a.label)} against ${esc(o.chart.b.label)} over the last ${n} days">
+      ${grid}<line class="cross" x1="0" x2="0" y1="${T}" y2="${H - Bm}" visibility="hidden"/>
+      <path class="b" d="${line(B)}"/><path class="a" d="${line(A)}"/>
+      <circle class="b" r="4" cx="${x(ib)}" cy="${y(B[ib])}"/><circle class="a" r="4" cx="${x(ia)}" cy="${y(A[ia])}"/>
+      <text class="lab" x="${W - R + 8}" y="${ya - 1}">${esc(o.chart.a.label)}</text><text x="${W - R + 8}" y="${ya + 11}">${fmt(A[ia])}</text>
+      <text class="lab" x="${W - R + 8}" y="${yb - 1}">${esc(o.chart.b.label)}</text><text x="${W - R + 8}" y="${yb + 11}">${fmt(B[ib])}</text>
+      <text x="${L}" y="${H - 6}">${day(0)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${day(n - 1)}</text>
+      </svg></div>`;
+  }
+
+  function hover(e) {
+    const tip = $('#tip'), box = e.target.closest ? e.target.closest('.chart') : null;
+    document.querySelectorAll('.chart .cross').forEach(c => c.setAttribute('visibility', 'hidden'));
+    if (!box) { tip.hidden = true; return; }
+    const p = JSON.parse(box.dataset.pts), svg = box.querySelector('svg'), r = svg.getBoundingClientRect();
+    const pt = e.touches ? e.touches[0] : e;
+    const sx = ((pt.clientX - r.left) / r.width) * p.W, n = p.a.length;
+    const i = Math.max(0, Math.min(n - 1, Math.round(((sx - p.L) / (p.W - p.L - p.R)) * (n - 1))));
+    const cx = p.L + ((p.W - p.L - p.R) * i) / (n - 1);
+    const cross = box.querySelector('.cross');
+    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('visibility', 'visible');
+    const gap = p.a[i] > 0 && p.b[i] > 0 ? `<br>Gap before tax <b>${gp(p.a[i] - p.b[i])}</b>` : '';
+    tip.innerHTML = `${esc(p.days[i])}<br>${esc(p.la)} <b>${p.a[i] ? gp(p.a[i]) : 'no trades'}</b><br>${esc(p.lb)} <b>${p.b[i] ? gp(p.b[i]) : 'no trades'}</b>${gap}`;
+    tip.hidden = false;
+    const tw = tip.offsetWidth;
+    tip.style.left = Math.min(window.innerWidth - tw - 8, pt.clientX + 14) + 'px';
+    tip.style.top = Math.max(8, pt.clientY - 10 - tip.offsetHeight) + 'px';
+  }
+
+  function detail(o) {
+    const sellWord = o.type === 'unpack' ? 'pieces' : o.type === 'pack' ? 'set' : 'item';
+    const rows = o.windows.map((w, i) => `<tr><th>${WINDOWS[i]}</th><td class="num">${w === null ? '<span class="muted">too few trades</span>' : signed(w)}</td></tr>`).join('');
+    return `<div class="detail-grid"><div>
+        <table class="mini">
+          <tr><th colspan="2"><b>Profit each, by time window</b></th></tr>${rows}
+          <tr><th>At the offer prices shown, now</th><td class="num">${signed(o.profit)}</td></tr>
+          <tr><th>If you sold the ${sellWord} instantly instead</th><td class="num">${signed(o.quick)}</td></tr>
+          <tr><th>If prices returned to the 7-day level</th><td class="num">${signed(o.fade)}</td></tr>
+          <tr><th>${o.type === 'unpack' ? 'Sets traded per day' : 'Sold into buy offers per day (slowest piece)'}</th><td class="num">${gp(o.buyPerDay)}</td></tr>
+          <tr><th>${o.type === 'unpack' ? 'Bought per day (slowest piece)' : 'Bought from sell offers per day'}</th><td class="num">${gp(o.sellPerDay)}</td></tr>
+          <tr><th>Buy limit per 4 hours</th><td class="num">${o.limit === null ? 'not listed' : gp(o.limit)}</td></tr>
+        </table></div><div>${chart(o)}</div></div>`;
+  }
+
+  // ---- Your plan -----------------------------------------------------------------
+  function settings() {
+    const cash = GE.parseCash(state.cash);
+    return { cash, slots: +state.slots, hours: +state.hours, types: state.types, hidden: new Set(state.hidden) };
+  }
+
+  function renderPlan(s) {
+    const el = $('#plan');
+    if (!s.cash) { el.innerHTML = '<div class="empty">Enter how much cash you have, for example <b>46m</b>.</div>'; return; }
+    const p = GE.plan(opps, s);
+    if (!p.picks.length) {
+      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now. Sets need 3 to 5 free slots to pack; try more slots, a longer check-in, or look at the full list below.</div>`;
+      return;
+    }
+    const tiles = [
+      [fmt(p.cost), `to spend of ${fmt(s.cash)}`], [fmt(p.profit), 'expected profit after tax'],
+      [((p.profit / p.cost) * 100).toFixed(1) + '%', 'return on what you spend'], [`${p.slots} of ${s.slots}`, 'slots used to buy'],
+    ].map(t => `<div class="tile"><b>${t[0]}</b><span>${t[1]}</span></div>`).join('');
+    const cards = p.picks.map(o => `<article class="card">
+        <div class="card-head"><h3><span class="kind">${KIND[o.type]}</span>${esc(o.name)} × ${gp(o.qty)}</h3>
+          <span class="gain">about ${fmt(o.total)} profit</span></div>
+        ${steps(o, o.qty)}
+        <div class="facts">
+          <span>Cost each <b>${gp(o.unitCost)}</b></span><span>Profit each after tax <b>${gp(o.profit)}</b> (${(o.roi * 100).toFixed(1)}%)</span>
+          ${o.breakEven ? `<span>Break-even sell price <b>${gp(o.breakEven)}</b></span>` : ''}
+          <span>Buying takes <b>${hoursText(o.buyHours)}</b></span><span>Selling takes <b>${hoursText(o.sellHours)}</b></span>
+          <span>Gap confirmed in ${dots(o)} time windows</span>
+        </div>
+        ${flags(o)}
+        <details><summary class="link" style="display:inline-block;margin-top:12px">Show the evidence</summary>${detail(o)}</details>
+        <div class="card-foot"><button class="link" data-act="hide" data-key="${o.key}">Hide this (already doing it, or not interested)</button></div>
+      </article>`).join('');
+    const left = s.cash - p.cost;
+    el.innerHTML = `<div class="tiles">${tiles}</div>${cards}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}`;
+  }
+
+  // ---- Every option --------------------------------------------------------------
+  function renderList() {
+    const s = settings(), cash = s.cash || 0;
+    seg($('#filter'), [{ v: 'all', t: 'All' }, { v: 'pack', t: 'Packing' }, { v: 'unpack', t: 'Unpacking' }, { v: 'flip', t: 'Flips' }, { v: 'weak', t: 'Failed checks' }], state.filter,
+      v => { state.filter = v; shown = 40; save(); renderList(); });
+    let list = GE.sized(opps, { cash: cash || Infinity, hours: s.hours }).filter(o => !s.hidden.has(o.key) && o.capTotal >= MIN_ROUND);
+    list = state.filter === 'weak' ? list.filter(o => o.confidence === 0) : list.filter(o => o.confidence > 0 && (state.filter === 'all' || o.type === state.filter));
+    list.forEach(o => { o.fits = o.qty >= 1 && o.slots <= s.slots; o.rank = (o.fits ? o.total : o.capTotal) * (o.confidence || 1); });
+    list.sort((a, b) => (b.fits - a.fits) || (b.rank - a.rank));
+    const max = Math.max(1, ...list.map(o => (o.fits ? o.total : 0)));
+    $('#list-note').textContent = state.filter === 'weak'
+      ? 'These show a gap right now but failed a check, so they are never put in your plan.'
+      : `Sized for ${cash ? fmt(cash) : 'any amount of'} cash and a check-in every ${s.hours} hours. Greyed rows need more slots or cash than you entered. Click a row for the evidence.`;
+    const rows = list.slice(0, shown).map(o => {
+      const need = o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : '';
+      const warn = o.flags.some(f => f.level === 'warn') ? ' <span title="See the notes in the detail" style="color:var(--warn)">⚠</span>' : '';
+      const isOpen = open.has(o.key);
+      return `<tr class="row${o.fits ? '' : ' dim'}${isOpen ? ' open' : ''}" data-act="toggle" data-key="${o.key}">
+          <td><div class="name-cell"><span><span class="caret">${isOpen ? '▾' : '▸'}</span><span class="kind">${KIND[o.type]}</span>${esc(o.name)}${warn}</span>${need ? `<span class="why">${need}</span>` : ''}</div></td>
+          <td class="r num">${o.slots}</td><td class="r num">${fmt(o.unitCost)}</td><td class="r num">${fmt(o.profit)}</td><td class="r num">${(o.roi * 100).toFixed(1)}%</td>
+          <td class="r num">${gp(o.fits ? o.qty : o.cap)}</td>
+          <td class="bar-cell"><div class="bar"><i style="width:${o.fits ? Math.max(1, (o.total / max) * 60) : 0}%"></i><span class="num">${fmt(o.fits ? o.total : o.capTotal)}</span></div></td>
+          <td>${dots(o)}</td></tr>${isOpen ? `<tr><td class="detail" colspan="8">${steps(o, o.fits ? o.qty : o.cap)}${flags(o)}${detail(o)}
+          <div class="card-foot"><button class="link" data-act="hide" data-key="${o.key}">Hide this</button></div></td></tr>` : ''}`;
+    }).join('');
+    $('#opts').innerHTML = `<thead><tr><th>Option</th><th class="r">Slots</th><th class="r">Cost each</th><th class="r">Profit each</th><th class="r">Return</th><th class="r">Quantity</th><th>Profit this round</th><th>Gap confirmed</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="8" class="muted">Nothing to show for this filter.</td></tr>'}</tbody>`;
+    $('#more').innerHTML = list.length > shown ? `<button class="link" data-act="more">Show more (${list.length - shown} left)</button>` : '';
+    const names = state.hidden.map(k => { const o = opps.find(x => x.key === k); return o ? `<button class="link" data-act="unhide" data-key="${k}">${esc(o.title)}</button>` : ''; }).filter(Boolean);
+    $('#hidden').innerHTML = state.hidden.length ? `Hidden: ${names.join(', ') || state.hidden.length + ' not currently available'} · <button class="link" data-act="unhide-all">Show all again</button>` : '';
+  }
+
+  // ---- Price check ---------------------------------------------------------------
+  function renderCheck() {
+    if (!model) return;
+    const q = $('#q').value.trim().toLowerCase(), sug = $('#suggest'), out = $('#check');
+    if (picked === null) {
+      const hits = q.length < 2 ? [] : [...model.items.values()].filter(i => i.name.toLowerCase().includes(q))
+        .sort((a, b) => (b.name.toLowerCase() === q) - (a.name.toLowerCase() === q) || (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || (b.hv24 + b.lv24) * b.medHi - (a.hv24 + a.lv24) * a.medHi).slice(0, 12);
+      sug.innerHTML = hits.map(i => `<button data-act="pick" data-id="${i.id}">${esc(i.name)}</button>`).join('');
+      out.innerHTML = q.length >= 2 && !hits.length ? '<div class="empty">No traded item matches that name.</div>' : '';
+      if (hits.length === 1 || (hits[0] && hits[0].name.toLowerCase() === q)) picked = hits[0].id; else return;
+    }
+    sug.innerHTML = '';
+    const it = model.items.get(picked), c = GE.priceCheck(model, it);
+    const paidEach = parsePrice($('#paid').value), qty = Math.max(1, parseInt($('#qty').value.replace(/\D/g, ''), 10) || 1);
+    let mine = '';
+    if (paidEach) {
+      const be = GE.breakEven(paidEach), each = GE.net(c.sell) - paidEach, quick = GE.net(c.quickSell) - paidEach;
+      mine = `<div class="facts"><span>Break-even sell price <b>${gp(be)}</b></span>
+        <span>At the sell offer price <b>${signed(each)}</b> each${qty > 1 ? `, <b>${signed(each * qty)}</b> for ${gp(qty)}` : ''}</span>
+        <span>Selling instantly <b>${signed(quick)}</b> each${qty > 1 ? `, <b>${signed(quick * qty)}</b> for ${gp(qty)}` : ''}</span></div>`;
+    }
+    const set = model.sets.find(s => s.id === it.id), inSets = model.sets.filter(s => s.parts.some(p => p.id === it.id));
+    let setNote = '';
+    if (set) {
+      const parts = set.parts.map(p => ({ it: model.items.get(p.id), qty: p.qty }));
+      const asPieces = parts.reduce((a, p) => a + p.qty * GE.net(GE.askPrice(p.it, model.now)), 0), asSet = GE.net(c.sell);
+      setNote = `<ul class="flags"><li class="info">Sold as a set you keep ${gp(asSet)} after tax. Unpacked and sold as pieces at their sell offer prices you would keep ${gp(asPieces)}, which is ${asPieces > asSet ? gp(asPieces - asSet) + ' more' : gp(asSet - asPieces) + ' less'}.</li></ul>
+        <table class="offers">${parts.map(p => `<tr><td class="act">Piece</td><td><button class="link" data-act="check" data-id="${p.it.id}">${esc(p.it.name)}</button></td><td class="num price">${gp(GE.askPrice(p.it, model.now))} each</td></tr>`).join('')}</table>`;
+    } else if (inSets.length) {
+      setNote = `<ul class="flags"><li class="info">Part of ${inSets.map(s => `<button class="link" data-act="check" data-id="${s.id}">${esc(s.name)}</button>`).join(', ')}.</li></ul>`;
+    }
+    const o = { chart: { a: { label: 'Buyers pay', days: it.dHi }, b: { label: 'Sellers accept', days: it.dLo } } };
+    out.innerHTML = `<article class="card">
+      <div class="card-head"><h3>${itemLink(it.id, it.name)}</h3><span class="small">last sale ${c.lastSoldAgo === null ? 'unknown' : ago(c.lastSoldAgo)}</span></div>
+      <div class="big-prices">
+        <div><b>${gp(c.sell)}</b><span>Sell offer: just under the cheapest recent seller</span></div>
+        <div><b>${gp(c.quickSell)}</b><span>Sell right now: what buy offers are paying</span></div>
+        <div><b>${gp(c.buy)}</b><span>Buy offer: just above where dumps have been filling</span></div>
+        <div><b>${gp(c.buyNow)}</b><span>Buy right now: the going sell-offer price</span></div>
+      </div>
+      ${mine}
+      <div class="facts"><span>Buyers paid <b>${gp(it.hiMin)}</b> to <b>${gp(it.hiMax)}</b> in the last 24 hours</span>
+        <span>Bought per day <b>${gp(c.buysPerDay)}</b></span><span>Dumped per day <b>${gp(c.dumpsPerDay)}</b></span>
+        <span>Buy limit <b>${it.limit === null ? 'not listed' : gp(it.limit)}</b></span></div>
+      ${setNote}
+      <div style="margin-top:14px;max-width:620px">${chart(o)}</div></article>`;
+  }
+
+  // "1.95m", "949k" or "949,000". Unlike cash, a bare number here is taken literally.
+  function parsePrice(text) {
+    const m = String(text || '').trim().toLowerCase().replace(/,|\s|gp/g, '').match(/^(\d*\.?\d+)([kmb]?)$/);
+    if (!m) return 0;
+    return Math.round(parseFloat(m[1]) * (m[2] === 'k' ? 1e3 : m[2] === 'm' ? 1e6 : m[2] === 'b' ? 1e9 : 1));
+  }
+
+  // ---- Render --------------------------------------------------------------------
+  function render() {
+    if (!model) return;
+    $('#tip').hidden = true;
+    status();
+    const s = settings();
+    $('#cash-read').textContent = s.cash ? `= ${gp(s.cash)} gp` : 'Type an amount like 46m or 800k';
+    seg($('#slots'), [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ v: String(n), t: String(n) })), String(state.slots), v => { state.slots = +v; save(); render(); });
+    seg($('#hours'), [4, 8, 12].map(n => ({ v: String(n), t: n + ' hours' })), String(state.hours), v => { state.hours = +v; save(); render(); });
+    renderPlan(s);
+    renderList();
+    if (state.tab === 'check' || picked !== null) renderCheck();
+  }
+
+  boot();
+})();

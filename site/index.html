@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>GE Flip Planner</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-row">
+    <h1>GE Flip Planner</h1>
+    <div class="status" id="status" aria-live="polite">Loading prices…</div>
+  </div>
+  <nav class="wrap tabs" role="tablist">
+    <button role="tab" data-tab="buy" aria-selected="true">What to buy</button>
+    <button role="tab" data-tab="check" aria-selected="false">Price check</button>
+    <button role="tab" data-tab="how" aria-selected="false">How it works</button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div id="banner"></div>
+
+  <section id="tab-buy">
+    <form class="inputs" id="inputs" autocomplete="off" onsubmit="return false">
+      <label class="field">
+        <span>Cash to spend</span>
+        <input id="cash" inputmode="decimal" placeholder="46m" aria-describedby="cash-read">
+        <small id="cash-read"></small>
+      </label>
+      <div class="field">
+        <span id="slots-label">Free GE slots</span>
+        <div class="seg" id="slots" role="radiogroup" aria-labelledby="slots-label"></div>
+      </div>
+      <div class="field">
+        <span id="hours-label">I check back every</span>
+        <div class="seg" id="hours" role="radiogroup" aria-labelledby="hours-label"></div>
+      </div>
+      <fieldset class="field">
+        <legend>Include</legend>
+        <label class="tick"><input type="checkbox" data-type="pack"> Packing sets</label>
+        <label class="tick"><input type="checkbox" data-type="unpack"> Unpacking sets</label>
+        <label class="tick"><input type="checkbox" data-type="flip"> Plain flips</label>
+      </fieldset>
+    </form>
+
+    <h2>Your plan</h2>
+    <div id="plan"></div>
+
+    <div class="list-head">
+      <h2>Every option</h2>
+      <div class="seg" id="filter" role="radiogroup" aria-label="Show"></div>
+    </div>
+    <p class="muted" id="list-note"></p>
+    <div class="table-wrap"><table class="opts" id="opts"></table></div>
+    <div id="more"></div>
+    <div id="hidden"></div>
+  </section>
+
+  <section id="tab-check" hidden>
+    <h2>Price check</h2>
+    <p class="muted">Look up anything you are holding or thinking of buying.</p>
+    <div class="check-inputs">
+      <label class="field grow"><span>Item</span><input id="q" placeholder="Start typing, e.g. Sunfire fanatic armour set" autocomplete="off"></label>
+      <label class="field"><span>I paid (each)</span><input id="paid" inputmode="decimal" placeholder="optional"></label>
+      <label class="field"><span>Quantity</span><input id="qty" inputmode="numeric" placeholder="1"></label>
+    </div>
+    <div id="suggest"></div>
+    <div id="check"></div>
+  </section>
+
+  <section id="tab-how" hidden>
+    <h2>How it works</h2>
+    <div class="prose">
+      <p>Every item has two live prices. The <b>instant-sell price</b> is what impatient sellers accept, so a buy offer placed there gets filled as people dump. The <b>instant-buy price</b> is what impatient buyers pay, so a sell offer placed there gets filled as people buy. All prices here come from real trades recorded by the OSRS Wiki.</p>
+      <p>The Grand Exchange takes <b>2% of every sale</b>, so the break-even sell price is the buy price divided by 0.98. Every profit shown is after that tax.</p>
+      <h3>The three kinds of trade</h3>
+      <ul>
+        <li><b>Packing a set.</b> Bid for the pieces, pack them at a Grand Exchange clerk (right-click, Sets), and sell the set. Buyers pay extra for a set in one click, while people dumping drops sell single pieces cheaply.</li>
+        <li><b>Unpacking a set.</b> The reverse: buy the set, unpack it at the clerk, and sell the pieces.</li>
+        <li><b>Plain flip.</b> Buy at the instant-sell price and sell at the instant-buy price. Margins are thinner, so these mostly fill leftover slots.</li>
+      </ul>
+      <h3>The checks every option has to pass</h3>
+      <ol>
+        <li><b>The gap has to persist.</b> Profit is worked out separately for the last 4 hours, 4–12 hours ago and 12–24 hours ago. A gap in all three is structural; a gap in only one is usually a single odd trade and is left out of your plan.</li>
+        <li><b>It has to actually trade.</b> Quantities are capped by the buy limit and by half of what the market trades between your check-ins, counted on the slowest side.</li>
+        <li><b>Spikes are priced in.</b> If the thing you would sell is more than 4% above its 7-day price, the card says what you would make if it dropped back.</li>
+        <li><b>Plain flips must be calm.</b> An item moving more than 5% against its week, or 3% within the day, is not offered as a flip.</li>
+        <li><b>Slots count.</b> A four-piece set needs four slots to buy, so options are ranked by what fits the slots and cash you enter.</li>
+      </ol>
+      <h3>How the offer prices are set</h3>
+      <ul>
+        <li><b>Buy offers</b> sit just above where dumps have actually been filling over the last few hours.</li>
+        <li><b>Sell offers</b> sit just under the cheapest recent seller, and never above the last six hours' median.</li>
+      </ul>
+      <h3>How fresh it is</h3>
+      <p>Prices are pulled live each time you open the page. The 24-hour and 10-day history behind the checks is rebuilt every 4 hours. The line at the top right shows both.</p>
+      <p class="muted">Nothing you type here leaves your browser. Cash, slots and hidden options are remembered on this device only.</p>
+    </div>
+  </section>
+</main>
+
+<div id="tip" class="tip" hidden></div>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

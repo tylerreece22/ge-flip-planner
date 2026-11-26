@@ -1,0 +1,49 @@
+name: Refresh prices
+
+# Rebuilds site/data.json from the OSRS Wiki prices API every 4 hours and,
+# once publishing is switched on, deploys the site to GitHub Pages.
+on:
+  schedule:
+    - cron: "17 */4 * * *"   # 00:17, 04:17, 08:17 ... UTC
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull price history
+        run: python3 scripts/scrape.py
+      - name: Check the planner runs on the new data
+        run: |
+          node scripts/check.js
+          node scripts/preview.js 36m 5 8
+      - name: Package the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    # Set the repository variable PUBLISH_PAGES to "true" to put the site online.
+    if: vars.PUBLISH_PAGES == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
