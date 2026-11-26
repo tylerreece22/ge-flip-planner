@@ -263,9 +263,11 @@
     }).filter(o => o.cap >= 1);
   }
 
-  /** Best combination for the cash and slots: maximise expected profit, never using one item twice. */
-  function plan(opps, { cash, slots, hours, types, hidden }) {
-    const allow = o => o.confidence > 0 && (!types || types[o.type]) && !(hidden && hidden.has(o.key)) && o.slots <= slots;
+  /** Best combination for the cash and slots: maximise expected profit, never using one item twice.
+      `minRoi` is the lowest return per trade (profit / cost, after tax) allowed into the plan, e.g. 0.08.
+      It keeps cash out of big low-margin trades that only win on size. */
+  function plan(opps, { cash, slots, hours, types, hidden, minRoi }) {
+    const allow = o => o.confidence > 0 && o.roi >= (minRoi || 0) && (!types || types[o.type]) && !(hidden && hidden.has(o.key)) && o.slots <= slots;
     let pool = sized(opps.filter(allow), { cash: Infinity, hours }).filter(o => o.unitCost <= cash);
     pool.forEach(o => { o.perSlot = (Math.min(o.cap, Math.floor(cash / o.unitCost)) * o.profit * o.confidence) / o.slots; });
     pool = pool.filter(o => o.perSlot > 0).sort((a, b) => b.perSlot - a.perSlot).slice(0, 40);

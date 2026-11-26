@@ -38,6 +38,10 @@
         <span id="hours-label">I check back every</span>
         <div class="seg" id="hours" role="radiogroup" aria-labelledby="hours-label"></div>
       </div>
+      <div class="field">
+        <span id="minroi-label">Minimum return per trade</span>
+        <div class="seg" id="minroi" role="radiogroup" aria-labelledby="minroi-label"></div>
+      </div>
       <fieldset class="field">
         <legend>Include</legend>
         <label class="tick"><input type="checkbox" data-type="pack"> Packing sets</label>
@@ -51,7 +55,10 @@
 
     <div class="list-head">
       <h2>Every option</h2>
-      <div class="seg" id="filter" role="radiogroup" aria-label="Show"></div>
+      <div class="list-controls">
+        <div class="seg" id="sort" role="radiogroup" aria-label="Sort by"></div>
+        <div class="seg" id="filter" role="radiogroup" aria-label="Show"></div>
+      </div>
     </div>
     <p class="muted" id="list-note"></p>
     <div class="table-wrap"><table class="opts" id="opts"></table></div>
@@ -89,6 +96,7 @@
         <li><b>Spikes are priced in.</b> If the thing you would sell is more than 4% above its 7-day price, the card says what you would make if it dropped back.</li>
         <li><b>Plain flips must be calm.</b> An item moving more than 5% against its week, or 3% within the day, is not offered as a flip.</li>
         <li><b>Slots count.</b> A four-piece set needs four slots to buy, so options are ranked by what fits the slots and cash you enter.</li>
+        <li><b>Return has a floor.</b> Your plan only uses trades whose profit after tax is at least the minimum return you pick (8% unless you change it). Among those it chooses the combination with the most profit. This keeps your cash out of large low-margin trades that only win on size.</li>
       </ol>
       <h3>How the offer prices are set</h3>
       <ul>

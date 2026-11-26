@@ -10,7 +10,7 @@
   const WINDOWS = ['Last 4 hours', '4–12 hours ago', '12–24 hours ago'];
 
   // ---- Settings remembered on this device only ---------------------------------
-  const defaults = { cash: '36m', slots: 3, hours: 8, types: { pack: true, unpack: true, flip: true }, hidden: [], tab: 'buy', filter: 'all' };
+  const defaults = { cash: '36m', slots: 3, hours: 8, minRoi: 8, sort: 'profit', types: { pack: true, unpack: true, flip: true }, hidden: [], tab: 'buy', filter: 'all' };
   let state = Object.assign({}, defaults);
   try { Object.assign(state, JSON.parse(localStorage.getItem('ge-flips') || '{}')); } catch (e) { /* private window: fine */ }
   state.types = Object.assign({}, defaults.types, state.types);
@@ -197,7 +197,7 @@
   // ---- Your plan -----------------------------------------------------------------
   function settings() {
     const cash = GE.parseCash(state.cash);
-    return { cash, slots: +state.slots, hours: +state.hours, types: state.types, hidden: new Set(state.hidden) };
+    return { cash, slots: +state.slots, hours: +state.hours, minRoi: (+state.minRoi || 0) / 100, types: state.types, hidden: new Set(state.hidden) };
   }
 
   function renderPlan(s) {
@@ -205,7 +205,7 @@
     if (!s.cash) { el.innerHTML = '<div class="empty">Enter how much cash you have, for example <b>46m</b>.</div>'; return; }
     const p = GE.plan(opps, s);
     if (!p.picks.length) {
-      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now. Sets need 3 to 5 free slots to pack; try more slots, a longer check-in, or look at the full list below.</div>`;
+      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now${s.minRoi ? ` at a return of ${state.minRoi}% or more` : ''}. Sets need 3 to 5 free slots to pack; try more slots, a lower minimum return, or look at the full list below.</div>`;
       return;
     }
     const tiles = [
@@ -237,14 +237,19 @@
       v => { state.filter = v; shown = 40; save(); renderList(); });
     let list = GE.sized(opps, { cash: cash || Infinity, hours: s.hours }).filter(o => !s.hidden.has(o.key) && o.capTotal >= MIN_ROUND);
     list = state.filter === 'weak' ? list.filter(o => o.confidence === 0) : list.filter(o => o.confidence > 0 && (state.filter === 'all' || o.type === state.filter));
-    list.forEach(o => { o.fits = o.qty >= 1 && o.slots <= s.slots; o.rank = (o.fits ? o.total : o.capTotal) * (o.confidence || 1); });
+    seg($('#sort'), [{ v: 'profit', t: 'Most profit' }, { v: 'roi', t: 'Highest return' }], state.sort, v => { state.sort = v; shown = 40; save(); renderList(); });
+    list.forEach(o => {
+      o.low = o.roi < s.minRoi;
+      o.fits = o.qty >= 1 && o.slots <= s.slots && !o.low;
+      o.rank = state.sort === 'roi' ? o.roi : (o.fits ? o.total : o.capTotal) * (o.confidence || 1);
+    });
     list.sort((a, b) => (b.fits - a.fits) || (b.rank - a.rank));
     const max = Math.max(1, ...list.map(o => (o.fits ? o.total : 0)));
     $('#list-note').textContent = state.filter === 'weak'
       ? 'These show a gap right now but failed a check, so they are never put in your plan.'
-      : `Sized for ${cash ? fmt(cash) : 'any amount of'} cash and a check-in every ${s.hours} hours. Greyed rows need more slots or cash than you entered. Click a row for the evidence.`;
+      : `Sized for ${cash ? fmt(cash) : 'any amount of'} cash and a check-in every ${s.hours} hours. Greyed rows need more slots or cash than you entered${s.minRoi ? `, or return less than your ${state.minRoi}% minimum` : ''}. Click a row for the evidence.`;
     const rows = list.slice(0, shown).map(o => {
-      const need = o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : '';
+      const need = o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : o.low ? `below your ${state.minRoi}% minimum return` : '';
       const warn = o.flags.some(f => f.level === 'warn') ? ' <span title="See the notes in the detail" style="color:var(--warn)">⚠</span>' : '';
       const isOpen = open.has(o.key);
       return `<tr class="row${o.fits ? '' : ' dim'}${isOpen ? ' open' : ''}" data-act="toggle" data-key="${o.key}">
@@ -326,6 +331,7 @@
     $('#cash-read').textContent = s.cash ? `= ${gp(s.cash)} gp` : 'Type an amount like 46m or 800k';
     seg($('#slots'), [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ v: String(n), t: String(n) })), String(state.slots), v => { state.slots = +v; save(); render(); });
     seg($('#hours'), [4, 8, 12].map(n => ({ v: String(n), t: n + ' hours' })), String(state.hours), v => { state.hours = +v; save(); render(); });
+    seg($('#minroi'), [0, 5, 8, 12, 15].map(n => ({ v: String(n), t: n ? n + '%' : 'Any' })), String(state.minRoi), v => { state.minRoi = +v; save(); render(); });
     renderPlan(s);
     renderList();
     if (state.tab === 'check' || picked !== null) renderCheck();
