@@ -94,7 +94,7 @@ function simulate(o, qty, T, Hc) {
   if (!H.has(end - HOUR) || !modelAt(end)) return null;
   const buys = o.buys.map(b => ({ id: b.id, per: b.per, price: b.price, need: qty * b.per, want: qty * b.per, got: 0, lim: limitOf.get(b.id), win: null, winGot: 0, credit: 0, moved: 0, instant: o.type === 'unpack' }));
   const inv = new Map(), asks = new Map(), sellCredit = new Map();
-  let cost = 0, revenue = 0, converted = 0, buyDoneAt = null, soldOutAt = null, dumped = 0, bought = null;
+  let cost = 0, revenue = 0, converted = 0, buyDoneAt = null, soldOutAt = null, dumped = 0, bought = null, slotHours = 0;
   const add = (id, n) => { if (n > 0) inv.set(id, (inv.get(id) || 0) + n); };
 
   function checkin(t) {
@@ -132,6 +132,8 @@ function simulate(o, qty, T, Hc) {
     const hb = H.get(t);
     if (!hb) return null;
     if (t > T && (t - T) % (Hc * HOUR) === 0) checkin(t);
+    // Slots in use this hour: every live buy offer, plus every item you have listed for sale.
+    slotHours += buys.filter(b => b.got < b.need && (t < buyEnd || (b.finishing && t < completeEnd))).length + [...inv.values()].filter(n => n > 0).length;
     for (const b of buys) {
       if (b.got >= b.need || !(t < buyEnd || (b.finishing && t < completeEnd))) continue;
       const x = hb.get(b.id); if (!x) continue;
@@ -166,7 +168,7 @@ function simulate(o, qty, T, Hc) {
     const it = model.items.get(id), q = it ? (GE.quickSell(it, end) || Math.round((it.weekLo || it.weekHi || asks.get(id) || 0) * 0.9)) : Math.round((asks.get(id) || 0) * 0.9);
     revenue += n * GE.net(q); dumped += n * GE.net(q); if (!it || !GE.quickSell(it, end)) stuck += n * GE.net(q);
   }
-  return { predicted: qty * o.profit, realised: revenue - cost, cost, bought: bought === null ? 0 : bought, dumped, stuck, buyHours: buyDoneAt === null ? null : buyDoneAt / HOUR, sellHours: soldOutAt === null ? null : soldOutAt / HOUR };
+  return { predicted: qty * o.profit, realised: revenue - cost, cost, slotHours, bought: bought === null ? 0 : bought, dumped, stuck, buyHours: buyDoneAt === null ? null : buyDoneAt / HOUR, sellHours: soldOutAt === null ? null : soldOutAt / HOUR };
 }
 
 // ---- Run it -------------------------------------------------------------------------------
