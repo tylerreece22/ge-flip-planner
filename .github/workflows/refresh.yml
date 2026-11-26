@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
   pages: write
   id-token: write
 
@@ -30,6 +31,13 @@ jobs:
         run: |
           node scripts/check.js
           node scripts/preview.js 36m 5 8
+      - name: Keep the schedule alive
+        # GitHub pauses scheduled workflows in public repos after 60 days without
+        # repository activity. Re-enabling the workflow resets that clock.
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/refresh.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        continue-on-error: true
       - name: Package the site
         uses: actions/upload-pages-artifact@v3
         with:
