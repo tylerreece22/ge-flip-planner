@@ -8,12 +8,25 @@
   const KIND = { pack: 'Pack', unpack: 'Unpack', flip: 'Flip' };
   const MIN_ROUND = 50000;      // options that cannot make this much in one round are noise
   const WINDOWS = ['Last 4 hours', '4–12 hours ago', '12–24 hours ago'];
+  // Columns of the option list. Click a heading to sort by it; `asc` marks the one that starts A to Z.
+  const COLS = [
+    { k: 'name', t: 'Option', get: o => o.name.toLowerCase(), asc: true },
+    { k: 'slots', t: 'Slots', r: true, get: o => o.slots },
+    { k: 'cost', t: 'Cost each', r: true, get: o => o.unitCost },
+    { k: 'profit', t: 'Profit each', r: true, get: o => o.profit },
+    { k: 'roi', t: 'Return', r: true, get: o => o.roi },
+    { k: 'qty', t: 'Quantity', r: true, get: o => o.shownQty },
+    { k: 'total', t: 'Profit this round', get: o => o.shownTotal },
+    { k: 'pos', t: 'Gap confirmed', get: o => o.pos },
+  ];
 
   // ---- Settings remembered on this device only ---------------------------------
-  const defaults = { cash: '36m', slots: 3, hours: 8, minRoi: 8, sort: 'profit', types: { pack: true, unpack: true, flip: true }, hidden: [], tab: 'buy', filter: 'all' };
+  const defaults = { cash: '36m', slots: 3, hours: 8, minRoi: 8, sort: { col: 'total', dir: 'desc' }, picks: [], types: { pack: true, unpack: true, flip: true }, hidden: [], tab: 'buy', filter: 'all' };
   let state = Object.assign({}, defaults);
   try { Object.assign(state, JSON.parse(localStorage.getItem('ge-flips') || '{}')); } catch (e) { /* private window: fine */ }
   state.types = Object.assign({}, defaults.types, state.types);
+  if (!state.sort || typeof state.sort !== 'object') state.sort = state.sort === 'roi' ? { col: 'roi', dir: 'desc' } : { col: 'total', dir: 'desc' };
+  if (!Array.isArray(state.picks)) state.picks = [];
   const save = () => { try { localStorage.setItem('ge-flips', JSON.stringify(state)); } catch (e) { /* ignore */ } };
 
   let data = null, model = null, opps = [], liveError = false, shown = 40, picked = null;
@@ -82,6 +95,19 @@
       else if (act === 'unhide-all') { state.hidden = []; save(); render(); }
       else if (act === 'toggle') { open.has(k) ? open.delete(k) : open.add(k); renderList(); }
       else if (act === 'more') { shown += 40; renderList(); }
+      else if (act === 'select') {
+        // Ticking rebuilds the plan above the table, so hold the table where it was on screen.
+        const inTable = !!t.closest('#opts'), before = $('#opts').getBoundingClientRect().top;
+        state.picks = state.picks.includes(k) ? state.picks.filter(x => x !== k) : state.picks.concat(k);
+        save(); render();
+        if (inTable) window.scrollBy(0, $('#opts').getBoundingClientRect().top - before);
+      }
+      else if (act === 'clear-picks') { state.picks = []; save(); render(); }
+      else if (act === 'sort') {
+        const col = COLS.find(c => c.k === t.dataset.col);
+        state.sort = state.sort.col === col.k ? { col: col.k, dir: state.sort.dir === 'desc' ? 'asc' : 'desc' } : { col: col.k, dir: col.asc ? 'asc' : 'desc' };
+        shown = 40; save(); renderList();
+      }
       else if (act === 'pick') { picked = +t.dataset.id; $('#q').value = model.items.get(picked).name; renderCheck(); }
       else if (act === 'check') { picked = +t.dataset.id; state.tab = 'check'; save(); tabs(); $('#q').value = model.items.get(picked).name; renderCheck(); window.scrollTo(0, 0); }
     });
@@ -200,19 +226,8 @@
     return { cash, slots: +state.slots, hours: +state.hours, minRoi: (+state.minRoi || 0) / 100, types: state.types, hidden: new Set(state.hidden) };
   }
 
-  function renderPlan(s) {
-    const el = $('#plan');
-    if (!s.cash) { el.innerHTML = '<div class="empty">Enter how much cash you have, for example <b>46m</b>.</div>'; return; }
-    const p = GE.plan(opps, s);
-    if (!p.picks.length) {
-      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now${s.minRoi ? ` at a return of ${state.minRoi}% or more` : ''}. Sets need 3 to 5 free slots to pack; try more slots, a lower minimum return, or look at the full list below.</div>`;
-      return;
-    }
-    const tiles = [
-      [fmt(p.cost), `to spend of ${fmt(s.cash)}`], [fmt(p.profit), 'expected profit after tax'],
-      [((p.profit / p.cost) * 100).toFixed(1) + '%', 'return on what you spend'], [`${p.slots} of ${s.slots}`, 'slots used to buy'],
-    ].map(t => `<div class="tile"><b>${t[0]}</b><span>${t[1]}</span></div>`).join('');
-    const cards = p.picks.map(o => `<article class="card">
+  function card(o, manual) {
+    return `<article class="card">
         <div class="card-head"><h3><span class="kind">${KIND[o.type]}</span>${esc(o.name)} × ${gp(o.qty)}</h3>
           <span class="gain">about ${fmt(o.total)} profit</span></div>
         ${steps(o, o.qty)}
@@ -224,10 +239,50 @@
         </div>
         ${flags(o)}
         <details><summary class="link" style="display:inline-block;margin-top:12px">Show the evidence</summary>${detail(o)}</details>
-        <div class="card-foot"><button class="link" data-act="hide" data-key="${o.key}">Hide this (already doing it, or not interested)</button></div>
-      </article>`).join('');
+        <div class="card-foot">${manual
+          ? `<button class="link" data-act="select" data-key="${o.key}">Remove from my picks</button>`
+          : `<button class="link" data-act="hide" data-key="${o.key}">Hide this (already doing it, or not interested)</button>`}</div>
+      </article>`;
+  }
+
+  function tiles(p, s) {
+    const over = p.slots > s.slots;
+    return `<div class="tiles">${[
+      [fmt(p.cost), `to spend of ${fmt(s.cash)}`], [fmt(p.profit), 'expected profit after tax'],
+      [p.cost ? ((p.profit / p.cost) * 100).toFixed(1) + '%' : '–', 'return on what you spend'],
+      [`${p.slots} of ${s.slots}`, over ? '⚠ slots needed to buy, more than you have free' : 'slots used to buy'],
+    ].map(t => `<div class="tile"><b>${t[0]}</b><span>${t[1]}</span></div>`).join('')}</div>`;
+  }
+
+  function nameOf(key) {
+    const [type, id] = key.split(':'), it = model.items.get(+id);
+    return `${KIND[type] || ''} ${it ? it.name : 'an option'}`.trim();
+  }
+
+  function renderPlan(s) {
+    const el = $('#plan');
+    if (!s.cash) { el.innerHTML = '<div class="empty">Enter how much cash you have, for example <b>46m</b>.</div>'; return; }
+    if (state.picks.length) {
+      // The player ticked options: build the plan from exactly those.
+      const p = GE.pickPlan(opps, state.picks, s), n = state.picks.length;
+      const notes = [];
+      p.unfunded.forEach(u => notes.push(u.reason === 'cash'
+        ? `${esc(u.o.title)} got nothing: there is not enough cash left for one (${fmt(u.o.unitCost)} each).`
+        : `${esc(u.o.title)} got nothing: it trades too rarely to finish between check-ins.`));
+      p.missing.forEach(k => notes.push(`${esc(nameOf(k))} is ticked but its gap has closed, so there is nothing to do there right now.`));
+      if (p.slots > s.slots) notes.push(`These picks need ${p.slots} slots to buy and you entered ${s.slots}. Start the ones at the top and add the rest as slots free up.`);
+      el.innerHTML = `<p class="mode"><b>Built from the ${n} option${n === 1 ? '' : 's'} you ticked</b>, with cash going to the highest return first. The minimum return is not applied to your own picks. <button class="link" data-act="clear-picks">Back to the automatic plan</button></p>
+        ${p.picks.length ? tiles(p, s) : ''}${notes.length ? `<ul class="flags" style="margin:0 0 12px">${notes.map(x => `<li class="warn">${x}</li>`).join('')}</ul>` : ''}
+        ${p.picks.map(o => card(o, true)).join('')}`;
+      return;
+    }
+    const p = GE.plan(opps, s);
+    if (!p.picks.length) {
+      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now${s.minRoi ? ` at a return of ${state.minRoi}% or more` : ''}. Sets need 3 to 5 free slots to pack; try more slots, a lower minimum return, or tick options yourself in the list below.</div>`;
+      return;
+    }
     const left = s.cash - p.cost;
-    el.innerHTML = `<div class="tiles">${tiles}</div>${cards}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}`;
+    el.innerHTML = `${tiles(p, s)}${p.picks.map(o => card(o, false)).join('')}${left > 0 && p.slots < s.slots ? `<p class="muted small">${fmt(left)} and ${s.slots - p.slots} slot${s.slots - p.slots === 1 ? '' : 's'} are left over because nothing else passes the checks at that size.</p>` : ''}`;
   }
 
   // ---- Every option --------------------------------------------------------------
@@ -237,31 +292,45 @@
       v => { state.filter = v; shown = 40; save(); renderList(); });
     let list = GE.sized(opps, { cash: cash || Infinity, hours: s.hours }).filter(o => !s.hidden.has(o.key) && o.capTotal >= MIN_ROUND);
     list = state.filter === 'weak' ? list.filter(o => o.confidence === 0) : list.filter(o => o.confidence > 0 && (state.filter === 'all' || o.type === state.filter));
-    seg($('#sort'), [{ v: 'profit', t: 'Most profit' }, { v: 'roi', t: 'Highest return' }], state.sort, v => { state.sort = v; shown = 40; save(); renderList(); });
+    const picks = new Set(state.picks), sort = state.sort, col = COLS.find(c => c.k === sort.col) || COLS[6];
     list.forEach(o => {
       o.low = o.roi < s.minRoi;
       o.fits = o.qty >= 1 && o.slots <= s.slots && !o.low;
-      o.rank = state.sort === 'roi' ? o.roi : (o.fits ? o.total : o.capTotal) * (o.confidence || 1);
+      o.shownQty = o.fits ? o.qty : o.cap;
+      o.shownTotal = o.fits ? o.total : o.capTotal;
+      o.picked = picks.has(o.key);
     });
-    list.sort((a, b) => (b.fits - a.fits) || (b.rank - a.rank));
+    // Ticked rows stay on top. The default order also keeps what fits you above what does not.
+    const byDefault = col.k === 'total' && sort.dir === 'desc', dir = sort.dir === 'desc' ? -1 : 1;
+    list.sort((a, b) => {
+      if (a.picked !== b.picked) return b.picked - a.picked;
+      if (byDefault) return (b.fits - a.fits) || (b.shownTotal * (b.confidence || 1) - a.shownTotal * (a.confidence || 1));
+      const x = col.get(a), y = col.get(b);
+      return (x < y ? -1 : x > y ? 1 : 0) * dir || b.shownTotal - a.shownTotal;
+    });
     const max = Math.max(1, ...list.map(o => (o.fits ? o.total : 0)));
     $('#list-note').textContent = state.filter === 'weak'
       ? 'These show a gap right now but failed a check, so they are never put in your plan.'
-      : `Sized for ${cash ? fmt(cash) : 'any amount of'} cash and a check-in every ${s.hours} hours. Greyed rows need more slots or cash than you entered${s.minRoi ? `, or return less than your ${state.minRoi}% minimum` : ''}. Click a row for the evidence.`;
+      : `Sized for ${cash ? fmt(cash) : 'any amount of'} cash and a check-in every ${s.hours} hours. Click a column heading to sort, and tick options to build the plan from your own picks. Greyed rows need more slots or cash than you entered${s.minRoi ? `, or return less than your ${state.minRoi}% minimum` : ''}. Click a row for the evidence.`;
     const rows = list.slice(0, shown).map(o => {
       const need = o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : o.low ? `below your ${state.minRoi}% minimum return` : '';
       const warn = o.flags.some(f => f.level === 'warn') ? ' <span title="See the notes in the detail" style="color:var(--warn)">⚠</span>' : '';
       const isOpen = open.has(o.key);
-      return `<tr class="row${o.fits ? '' : ' dim'}${isOpen ? ' open' : ''}" data-act="toggle" data-key="${o.key}">
+      return `<tr class="row${o.fits ? '' : ' dim'}${isOpen ? ' open' : ''}${o.picked ? ' picked' : ''}" data-act="toggle" data-key="${o.key}">
+          <td class="tickcell" data-act="select" data-key="${o.key}"><input type="checkbox" ${o.picked ? 'checked' : ''} aria-label="Use ${esc(o.title)} in my plan"></td>
           <td><div class="name-cell"><span><span class="caret">${isOpen ? '▾' : '▸'}</span><span class="kind">${KIND[o.type]}</span>${esc(o.name)}${warn}</span>${need ? `<span class="why">${need}</span>` : ''}</div></td>
           <td class="r num">${o.slots}</td><td class="r num">${fmt(o.unitCost)}</td><td class="r num">${fmt(o.profit)}</td><td class="r num">${(o.roi * 100).toFixed(1)}%</td>
-          <td class="r num">${gp(o.fits ? o.qty : o.cap)}</td>
-          <td class="bar-cell"><div class="bar"><i style="width:${o.fits ? Math.max(1, (o.total / max) * 60) : 0}%"></i><span class="num">${fmt(o.fits ? o.total : o.capTotal)}</span></div></td>
-          <td>${dots(o)}</td></tr>${isOpen ? `<tr><td class="detail" colspan="8">${steps(o, o.fits ? o.qty : o.cap)}${flags(o)}${detail(o)}
+          <td class="r num">${gp(o.shownQty)}</td>
+          <td class="bar-cell"><div class="bar"><i style="width:${o.fits ? Math.max(1, (o.total / max) * 60) : 0}%"></i><span class="num">${fmt(o.shownTotal)}</span></div></td>
+          <td>${dots(o)}</td></tr>${isOpen ? `<tr><td class="detail" colspan="9">${steps(o, o.shownQty)}${flags(o)}${detail(o)}
           <div class="card-foot"><button class="link" data-act="hide" data-key="${o.key}">Hide this</button></div></td></tr>` : ''}`;
     }).join('');
-    $('#opts').innerHTML = `<thead><tr><th>Option</th><th class="r">Slots</th><th class="r">Cost each</th><th class="r">Profit each</th><th class="r">Return</th><th class="r">Quantity</th><th>Profit this round</th><th>Gap confirmed</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="8" class="muted">Nothing to show for this filter.</td></tr>'}</tbody>`;
+    const heads = COLS.map(c => {
+      const on = c.k === col.k;
+      return `<th class="${c.r ? 'r' : ''}"${on ? ` aria-sort="${sort.dir === 'desc' ? 'descending' : 'ascending'}"` : ''}><button class="th" data-act="sort" data-col="${c.k}" title="Sort by ${esc(c.t.toLowerCase())}">${esc(c.t)}<span class="arrow">${on ? (sort.dir === 'desc' ? '▼' : '▲') : ''}</span></button></th>`;
+    }).join('');
+    $('#opts').innerHTML = `<thead><tr><th><span class="sr">Use in my plan</span></th>${heads}</tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" class="muted">Nothing to show for this filter.</td></tr>'}</tbody>`;
     $('#more').innerHTML = list.length > shown ? `<button class="link" data-act="more">Show more (${list.length - shown} left)</button>` : '';
     const names = state.hidden.map(k => { const o = opps.find(x => x.key === k); return o ? `<button class="link" data-act="unhide" data-key="${k}">${esc(o.title)}</button>` : ''; }).filter(Boolean);
     $('#hidden').innerHTML = state.hidden.length ? `Hidden: ${names.join(', ') || state.hidden.length + ' not currently available'} · <button class="link" data-act="unhide-all">Show all again</button>` : '';

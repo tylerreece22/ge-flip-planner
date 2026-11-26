@@ -301,6 +301,30 @@
     };
   }
 
+  /** A plan built from options the player ticked themselves. Every tick is honoured where it can be:
+      cash goes to the highest return first, and each is sized by the same volume and buy-limit caps
+      as the automatic plan. `unfunded` lists ticks that got nothing, `missing` ticks whose gap has gone. */
+  function pickPlan(opps, keys, { cash, hours }) {
+    const byKey = new Map(opps.map(o => [o.key, o]));
+    const chosen = keys.map(k => byKey.get(k)).filter(Boolean).sort((a, b) => b.roi - a.roi);
+    let left = cash;
+    const picks = [], unfunded = [];
+    for (const o of chosen) {
+      const cap = sizeFor(o, hours), qty = Math.min(cap, Math.floor(left / o.unitCost));
+      if (qty < 1) { unfunded.push({ o, reason: cap < 1 ? 'thin' : 'cash' }); continue; }
+      left -= qty * o.unitCost;
+      picks.push(Object.assign({}, o, {
+        qty, cost: qty * o.unitCost, total: qty * o.profit, expected: qty * o.profit * o.confidence,
+        buyHours: hoursToFill(qty, o.buyPerDay), sellHours: hoursToFill(qty, o.sellPerDay),
+      }));
+    }
+    return {
+      picks, unfunded, missing: keys.filter(k => !byKey.has(k)),
+      cost: picks.reduce((a, p) => a + p.cost, 0), profit: picks.reduce((a, p) => a + p.total, 0),
+      slots: picks.reduce((a, p) => a + p.slots, 0),
+    };
+  }
+
   /** Everything the price-check tab shows for one item. */
   function priceCheck(model, it) {
     const now = model.now;
@@ -332,5 +356,5 @@
     return Math.round(x * mult);
   }
 
-  return { tax, net, breakEven, load, applyLive, opportunities, sized, plan, priceCheck, bidPrice, askPrice, payPrice, quickSell, fmt, gp, parseCash, median };
+  return { tax, net, breakEven, load, applyLive, opportunities, sized, plan, pickPlan, priceCheck, bidPrice, askPrice, payPrice, quickSell, fmt, gp, parseCash, median };
 });

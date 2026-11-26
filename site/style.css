@@ -100,7 +100,15 @@ table.offers td.price { font-weight: 600; }
 
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
 .list-head h2 { margin: 0; }
-.list-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+table.opts th button.th { font: inherit; font-weight: 600; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+table.opts th button.th:hover, table.opts th[aria-sort] button.th { color: var(--text); }
+table.opts th .arrow { display: inline-block; width: 12px; font-size: 9px; text-align: center; vertical-align: 1px; }
+table.opts td.tickcell { width: 34px; padding-right: 0; cursor: pointer; }
+table.opts td.tickcell input { width: 16px; height: 16px; margin: 0; vertical-align: middle; cursor: pointer; accent-color: var(--accent); }
+table.opts tr.picked td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.mode { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 9px 12px; margin: 0 0 12px; font-size: 13.5px; color: var(--text-2); }
+.mode b { color: var(--text); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 #list-note { margin: 6px 0 10px; font-size: 13.5px; }
 .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 table.opts { border-collapse: collapse; width: 100%; min-width: 760px; }
