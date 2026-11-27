@@ -102,7 +102,7 @@
         <li><b>Plain flips must be calm.</b> An item moving more than 5% against its week, or 3% within the day, is not offered as a flip.</li>
         <li><b>Slots count.</b> A four-piece set needs four slots to buy, so the plan is the most profitable combination that fits your slots and cash.</li>
       </ol>
-      <p>Anything that fails is listed under "Failed checks" so you can see it, but it never goes into the automatic plan.</p>
+      <p>Anything that fails is listed under "Failed checks", and at the bottom of its own kind's list, so you can see it and why. It never goes into the automatic plan.</p>
 
       <h3 id="tested">How it was tested</h3>
       <p>The planner was replayed against three weeks of real hourly trading (5–26 November 2026, 120 starting points, one every 4 hours). At each point it was given only the data the site would have had then, and its plan was walked forward hour by hour:</p>
@@ -144,7 +144,7 @@
         <li><b>Sell offers</b> sit just under the cheapest recent seller, and never above the last six hours' median.</li>
       </ul>
       <h3>How fresh it is</h3>
-      <p>Prices are pulled live each time you open the page. The 24-hour and 10-day history behind the checks is rebuilt every 4 hours. The line at the top right shows both.</p>
+      <p>Live prices are checked every minute while the page is on screen, and again the moment you come back to it. The hourly history behind the checks always runs up to the last complete hour: a scheduled job rebuilds it every hour, and if that job is late the page fetches the missing hours itself. The line at the top right shows both times.</p>
       <p class="muted">Nothing you type here leaves your browser. Cash, slots and hidden options are remembered on this device only.</p>
     </div>
   </section>

@@ -1,7 +1,9 @@
 /* Page behaviour for the GE flip planner. All trade maths lives in core.js. */
 (function () {
   'use strict';
-  const API = 'https://prices.runescape.wiki/api/v1/osrs/latest';
+  const API = 'https://prices.runescape.wiki/api/v1/osrs';
+  const HOUR = 3600;
+  const POLL = 60;              // seconds between live price checks while the page is on screen
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const { fmt, gp } = GE;
@@ -32,45 +34,78 @@
   const save = () => { try { localStorage.setItem('ge-flips', JSON.stringify(state)); } catch (e) { /* ignore */ } };
 
   let data = null, model = null, opps = [], liveError = false, shown = 40, picked = null;
+  let busy = false, lastRun = 0, dataTried = 0;
   const open = new Set();
 
   // ---- Loading -------------------------------------------------------------------
+  const getJson = async (url, cache) => { const r = await fetch(url, { cache }); if (!r.ok) throw new Error(r.status); return r.json(); };
+
   async function boot() {
     wire();
     try {
-      data = await (await fetch('data.json?t=' + Math.floor(Date.now() / 60000), { cache: 'no-store' })).json();
+      data = await getJson('data.json', 'no-cache');
     } catch (e) {
       $('#status').textContent = 'Could not load the price data.';
       $('#plan').innerHTML = '<div class="empty">The price data file did not load. Try again in a minute.</div>';
       return;
     }
     await refresh();
-    setInterval(() => { if (!document.hidden) refresh(); }, 10 * 60 * 1000);
-    setInterval(status, 30 * 1000);
+    setInterval(() => { if (!document.hidden) refresh(); }, POLL * 1000);
+    setInterval(status, 20 * 1000);
+    // Coming back to the tab (or unlocking the phone) should never show old prices.
+    const back = () => { if (!document.hidden && Date.now() / 1000 - lastRun > 15) refresh(); };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('focus', back);
+    window.addEventListener('pageshow', back);
+  }
+
+  // The scheduled rebuild of data.json can run late or miss a run, so the page does not rely on it for
+  // anything time-sensitive: it picks up a newer data.json when there is one, and adds any hours the
+  // file is missing straight from the API.
+  async function syncHistory(now) {
+    if (now - data.generated > 70 * 60 && now - dataTried > 10 * 60) {
+      dataTried = now;
+      try { const d = await getJson('data.json', 'no-cache'); if (d.generated > data.generated) data = d; } catch (e) { /* keep what we have */ }
+    }
+    if (!data.hours) return;
+    const newest = Math.floor(now / HOUR) * HOUR - HOUR;            // start of the last complete hour
+    const starts = [];
+    for (let t = Math.max(data.lastHour, newest - 23 * HOUR); t <= newest; t += HOUR) starts.push(t);
+    if (!starts.length) return;
+    const got = await Promise.all(starts.map(t => getJson(`${API}/1h?timestamp=${t}`, 'no-store').then(j => j.data, () => null)));
+    for (let i = 0; i < starts.length; i++) {
+      // An hour is published a few minutes after it ends. Stop at the first one that is missing; the next check tries again.
+      if (!got[i] || Object.keys(got[i]).length < 500) break;
+      GE.addHour(data, starts[i], got[i]);
+    }
   }
 
   async function refresh() {
-    const now = Math.floor(Date.now() / 1000);
-    model = GE.load(data, now);
+    if (busy) return;
+    busy = true;
     try {
-      const live = await (await fetch(API, { cache: 'no-store' })).json();
-      GE.applyLive(model, live.data, now);
-      liveError = false;
-    } catch (e) { liveError = true; }
-    opps = GE.opportunities(model);
-    render();
+      const now = Math.floor(Date.now() / 1000);
+      lastRun = now;
+      const [live] = await Promise.all([getJson(API + '/latest', 'no-store').then(j => j.data, () => null), syncHistory(now)]);
+      model = GE.load(data, now);
+      if (live) GE.applyLive(model, live, now);
+      liveError = !live;
+      opps = GE.opportunities(model);
+      render();
+    } finally { busy = false; }
   }
 
   const ago = s => (s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 172800 ? Math.round(s / 3600) + ' hours ago' : Math.round(s / 86400) + ' days ago');
+  const clock = t => new Date(t * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
   function status() {
     if (!model) return;
     const now = Date.now() / 1000;
     const prices = liveError ? `Live prices unavailable, using prices from ${ago(now - model.generated)}` : `Prices live, checked ${ago(now - model.pricesAt)}`;
-    $('#status').innerHTML = `${esc(prices)} · history rebuilt ${esc(ago(now - model.generated))} · <button id="reload">Refresh</button>`;
-    const age = now - model.generated;
-    $('#banner').innerHTML = age > 9 * 3600
-      ? `<div class="banner">⚠ The price history behind these checks is ${esc(ago(age).replace(' ago', ''))} old, so the scheduled update has missed a run. Live prices are still current, but treat the picks with more care.</div>` : '';
+    $('#status').innerHTML = `${esc(prices)} · hourly history up to ${esc(clock(model.historyAt))} · <button id="reload">Refresh</button>`;
+    const behind = now - model.historyAt;                           // normally under an hour and a bit
+    $('#banner').innerHTML = behind > 3 * HOUR
+      ? `<div class="banner">⚠ The hourly history behind these checks stops ${esc(ago(behind))}, because neither the scheduled update nor this page could fetch anything newer. Live prices are still current, but treat the picks with more care.</div>` : '';
   }
 
   // ---- Controls ------------------------------------------------------------------
@@ -328,7 +363,16 @@
     }
     const p = GE.plan(opps, s);
     if (!p.picks.length) {
-      el.innerHTML = `<div class="empty">Nothing passes the checks for ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now${s.minRoi ? ` at a return of ${state.minRoi}% or more` : ''}. Sets need 3 to 5 free slots to pack; try more slots, a lower minimum return, or tick options yourself in the list below.</div>${compare(s)}`;
+      const on = Object.keys(WORD).filter(t => s.types[t]);
+      if (!on.length) { el.innerHTML = '<div class="empty">Tick at least one kind of trade under Include.</div>'; return; }
+      const kinds = on.length === 3 ? '' : on.map(t => WORD[t]).join(' or ') + ' ';
+      const failed = listable(s).filter(o => s.types[o.type] && o.confidence === 0).length;
+      const usable = listable(s).some(o => s.types[o.type] && o.confidence > 0);
+      const why = usable
+        ? `${s.types.pack ? 'Sets need 3 to 5 free slots to pack. ' : ''}Try more slots, a lower minimum return, or tick options yourself in the list below.`
+        : failed ? `${failed === 1 ? 'One' : failed} ${kinds}gap${failed === 1 ? ' is' : 's are'} open at today's prices but failed a check. ${failed === 1 ? 'It is' : 'They are'} listed under "Every option" below with the reason, and you can tick one to use it anyway.`
+          : `No ${kinds}gap worth a slot is open at the moment.`;
+      el.innerHTML = `<div class="empty">${usable ? `No ${kinds}option fits` : `No ${kinds}option passes the checks for`} ${esc(fmt(s.cash))} and ${s.slots} slot${s.slots === 1 ? '' : 's'} right now${usable && s.minRoi ? ` at a return of ${state.minRoi}% or more` : ''}. ${why}</div>${compare(s)}`;
       return;
     }
     const left = s.cash - p.cost;
@@ -337,15 +381,29 @@
   }
 
   // ---- Every option --------------------------------------------------------------
+  const WORD = { pack: 'packing', unpack: 'unpacking', flip: 'plain flip' };
+  /** Every open gap big enough to matter, sized for these settings. */
+  const listable = s => GE.sized(opps, { cash: s.cash || Infinity, hours: s.hours }).filter(o => !s.hidden.has(o.key) && o.cap * o.profitNow >= MIN_ROUND);
+
   function renderList() {
-    const s = settings(), cash = s.cash || 0;
+    const s = settings(), f = state.filter;
     seg($('#filter'), [{ v: 'all', t: 'All' }, { v: 'pack', t: 'Packing' }, { v: 'unpack', t: 'Unpacking' }, { v: 'flip', t: 'Flips' }, { v: 'weak', t: 'Failed checks' }], state.filter,
       v => { state.filter = v; shown = 40; save(); renderList(); });
-    let list = GE.sized(opps, { cash: cash || Infinity, hours: s.hours }).filter(o => !s.hidden.has(o.key) && o.cap * o.profitNow >= MIN_ROUND);
-    list = state.filter === 'weak' ? list.filter(o => o.confidence === 0) : list.filter(o => o.confidence > 0 && (state.filter === 'all' || o.type === state.filter));
+    const all = listable(s), on = Object.keys(WORD).filter(t => s.types[t]);
+    let list, passing = 0, alsoFailed = 0;
+    if (f === 'weak') list = all.filter(o => o.confidence === 0);
+    else {
+      // "All" follows the Include ticks; a kind's own tab shows that kind whatever is ticked.
+      const scoped = all.filter(o => (f === 'all' ? s.types[o.type] : o.type === f));
+      const pass = scoped.filter(o => o.confidence > 0), fail = scoped.filter(o => o.confidence === 0);
+      // Looking at one kind, or with nothing passing, list what failed as well: an empty table hides that the gaps exist.
+      const showFailed = f !== 'all' || on.length === 1 || !pass.length;
+      list = showFailed ? pass.concat(fail) : pass;
+      passing = pass.length; alsoFailed = showFailed ? fail.length : 0;
+    }
     const picks = new Set(state.picks), sort = state.sort, col = COLS.find(c => c.k === sort.col) || COLS[6];
     list.forEach(o => {
-      const failed = o.confidence === 0;                       // failed rows show today's gap, since nothing is counted for them
+      const failed = o.failed = o.confidence === 0;            // failed rows show today's gap, since nothing is counted for them
       o.low = !failed && o.roi < s.minRoi;
       o.fits = !failed && o.qty >= 1 && o.slots <= s.slots && !o.low;
       o.vol = Math.min(o.buyPerDay, o.sellPerDay);
@@ -359,16 +417,21 @@
     const byDefault = col.k === 'total' && sort.dir === 'desc', dir = sort.dir === 'desc' ? -1 : 1;
     list.sort((a, b) => {
       if (a.picked !== b.picked) return b.picked - a.picked;
+      if (a.failed !== b.failed) return a.failed - b.failed;   // today's gap on a failed row is not comparable, so they go last
       if (byDefault) return (b.fits - a.fits) || (b.shownTotal * (b.confidence || 1) - a.shownTotal * (a.confidence || 1));
       const x = col.get(a), y = col.get(b);
       return (x < y ? -1 : x > y ? 1 : 0) * dir || b.shownTotal - a.shownTotal;
     });
     const max = Math.max(1, ...list.map(o => (o.fits ? o.total : 0)));
-    $('#list-note').textContent = state.filter === 'weak'
+    const scope = f !== 'all' ? WORD[f] : on.length === 1 ? WORD[on[0]] : '';
+    const failNote = !alsoFailed ? ''
+      : passing ? `The ${alsoFailed} marked "failed the checks" at the bottom ${alsoFailed === 1 ? 'is' : 'are'} never put in the automatic plan. `
+        : `No ${scope ? scope + ' ' : ''}option passes the checks right now. The ${alsoFailed === 1 ? 'one' : alsoFailed} below ${alsoFailed === 1 ? 'has' : 'have'} a gap at today's prices but failed a check, so ${alsoFailed === 1 ? 'it is' : 'they are'} never put in the automatic plan. Open one to see which check. `;
+    $('#list-note').textContent = f === 'weak'
       ? 'These show a gap at today\'s prices but failed a check, so they are never put in your plan. In a three-week replay they lost money more than 4 times in 10, and lost overall. The figures here assume today\'s prices hold.'
-      : `Tick options to build the plan from your own picks. Tap an option for its offers and evidence. Greyed options do not fit the cash, slots or minimum return you entered.`;
+      : failNote + `Tick options to build the plan from your own picks. Tap an option for its offers and evidence. Greyed options do not fit the cash, slots or minimum return you entered.`;
     const rows = list.slice(0, shown).map(o => {
-      const need = o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : o.low ? `below your ${state.minRoi}% minimum return` : '';
+      const need = o.failed && f !== 'weak' ? 'failed the checks' : o.slots > s.slots ? `needs ${o.slots} slots` : o.qty < 1 ? `needs ${fmt(o.unitCost)}` : o.low ? `below your ${state.minRoi}% minimum return` : '';
       const warn = o.flags.some(f => f.level === 'warn') ? '&nbsp;<span class="warnmark" title="Has a warning: open it to read why">⚠</span>' : '';
       const isOpen = open.has(o.key);
       return `<tr class="row${o.fits ? '' : ' dim'}${isOpen ? ' open' : ''}${o.picked ? ' picked' : ''}" data-act="toggle" data-key="${o.key}">
@@ -391,7 +454,7 @@
       .map(x => `<option value="${x[0]}"${x[0] === curSort ? ' selected' : ''}>${esc(x[1])}</option>`).join('');
     sel.onchange = () => { const [c, d] = sel.value.split(':'); state.sort = { col: c, dir: d }; shown = 40; save(); renderList(); };
     $('#opts').innerHTML = `<thead><tr><th><span class="pickhead">Pick</span></th>${heads}</tr></thead>
-      <tbody>${rows || '<tr><td colspan="10" class="muted">Nothing to show for this filter.</td></tr>'}</tbody>`;
+      <tbody>${rows || `<tr><td colspan="10" class="muted">${f === 'weak' ? 'Nothing has failed the checks right now.' : !on.length && f === 'all' ? 'Tick at least one kind of trade under Include.' : `No ${scope ? scope + ' ' : ''}gap worth a slot is open right now.`}</td></tr>`}</tbody>`;
     $('#more').innerHTML = list.length > shown ? `<button class="link" data-act="more">Show more (${list.length - shown} left)</button>` : '';
     const names = state.hidden.map(k => { const o = opps.find(x => x.key === k); return o ? `<button class="link" data-act="unhide" data-key="${k}">${esc(o.title)}</button>` : ''; }).filter(Boolean);
     $('#hidden').innerHTML = state.hidden.length ? `Hidden: ${names.join(', ') || state.hidden.length + ' not currently available'} · <button class="link" data-act="unhide-all">Show all again</button>` : '';

@@ -54,11 +54,63 @@
     };
   }
 
+  // ---- Hourly history ----------------------------------------------------------
+  // data.json carries the last 24 complete hours as `hours` (newest first), each a map of
+  // item id -> [avg instant-sell price, avg instant-buy price, sold-into-bids count, bought-from-asks count].
+  // The summary the rules read is worked out here, so the page can add newer hours itself
+  // (addHour) instead of waiting for the next scheduled rebuild.
+  const HOUR = 3600, KEEP_HOURS = 24;
+
+  function vwap(bs, pi, vi) {
+    let vol = 0, tot = 0;
+    for (const b of bs) if (b) { vol += b[vi]; tot += b[pi] * b[vi]; }
+    return vol ? [Math.round(tot / vol), vol] : [0, 0];
+  }
+
+  /** Boil one item's hourly buckets (newest first, gaps undefined) down to:
+   *  w  three windows (last 4h, 4-12h ago, 12-24h ago), each [sell price, buy price, sold, bought]
+   *  m  [median instant-buy, median instant-sell] over the last 6 hours that traded
+   *  r  24h range [min buy, max buy, min sell, max sell]
+   *  v  24h volume [sold into bids, bought from asks] */
+  function summarise(b) {
+    const w = [[0, 4], [4, 12], [12, 24]].map(([a, c]) => {
+      const x = b.slice(a, c), lo = vwap(x, 0, 2), hi = vwap(x, 1, 3);
+      return [lo[0], hi[0], lo[1], hi[1]];
+    });
+    const his = [], los = [];
+    let lv = 0, hv = 0;
+    for (const x of b) if (x) { if (x[1]) his.push(x[1]); if (x[0]) los.push(x[0]); lv += x[2]; hv += x[3]; }
+    return {
+      w, m: [median(his.slice(0, 6)), median(los.slice(0, 6))],
+      r: [his.length ? Math.min(...his) : 0, his.length ? Math.max(...his) : 0, los.length ? Math.min(...los) : 0, los.length ? Math.max(...los) : 0],
+      v: [lv, hv],
+    };
+  }
+
+  /** Add the hour starting at `start` (the API's /1h response data) to data.json's history.
+   *  Hours must arrive oldest first. Returns false if this hour is already in, or the data has no hourly history. */
+  function addHour(data, start, api) {
+    if (!data.hours || start < data.lastHour) return false;
+    for (let t = data.lastHour; t < start; t += HOUR) data.hours.unshift({});   // an hour we could not get counts as no trades
+    const h = {};
+    for (const id in api) {
+      const x = api[id];
+      if (x && data.items[id]) h[id] = [x.avgLowPrice || 0, x.avgHighPrice || 0, x.lowPriceVolume || 0, x.highPriceVolume || 0];
+    }
+    data.hours.unshift(h);
+    if (data.hours.length > KEEP_HOURS) data.hours.length = KEEP_HOURS;
+    data.lastHour = start + HOUR;
+    return true;
+  }
+
   /** Turn data.json into a model. `now` is seconds since the epoch. */
   function load(data, now) {
-    const items = new Map();
-    for (const id in data.items) items.set(+id, makeItem(id, data.items[id]));
-    return { generated: data.generated, now: now || data.generated, pricesAt: data.generated, live: false, items, sets: data.sets };
+    const items = new Map(), hs = data.hours;
+    for (const id in data.items) {
+      const r = data.items[id];
+      items.set(+id, makeItem(id, hs ? Object.assign({}, r, summarise(hs.map(h => h[id]))) : r));
+    }
+    return { generated: data.generated, historyAt: data.lastHour || data.generated, now: now || data.generated, pricesAt: data.generated, live: false, items, sets: data.sets };
   }
 
   /** Overlay the API's live /latest response on top of the scraped data. */
@@ -387,5 +439,5 @@
     return Math.round(x * mult);
   }
 
-  return { FLOOR, tax, net, breakEven, load, applyLive, opportunities, sized, plan, pickPlan, priceCheck, bidPrice, askPrice, payPrice, quickSell, fmt, gp, parseCash, median };
+  return { FLOOR, tax, net, breakEven, load, addHour, summarise, applyLive, opportunities, sized, plan, pickPlan, priceCheck, bidPrice, askPrice, payPrice, quickSell, fmt, gp, parseCash, median };
 });

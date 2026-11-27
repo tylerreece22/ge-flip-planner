@@ -42,14 +42,7 @@ function slim(file) {
 const H = new Map(hourStamps.map(t => [t, slim(`1h_${t}.json`)]));
 const D = new Map(dayStamps.map(t => [t, slim(`24h_${t}.json`)]));
 
-// ---- The same summary scripts/scrape.py writes, rebuilt for any past hour T ------------------
-function vwap(bs, pi, vi) {
-  let vol = 0, tot = 0;
-  for (const b of bs) if (b) { vol += b[vi]; tot += b[pi] * b[vi]; }
-  return vol ? [Math.round(tot / vol), vol] : [0, 0];
-}
-const med = a => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return Math.round(s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2); };
-
+// ---- The same data the site has at any past hour T (the summary itself is GE.summarise) ----------
 function snapshot(T) {
   const hs = []; for (let i = 1; i <= 24; i++) hs.push(H.get(T - i * HOUR));
   const lastDay = Math.floor(T / 86400) * 86400 - 86400, ds = [];
@@ -60,15 +53,11 @@ function snapshot(T) {
     if (!keep.has(m.id)) continue;
     const b = hs.map(h => h.get(m.id));
     if (!b.some(Boolean)) continue;
-    const w = [[0, 4], [4, 12], [12, 24]].map(([a, c]) => { const [lo, lv] = vwap(b.slice(a, c), 2, 3), [hi, hv] = vwap(b.slice(a, c), 0, 1); return [lo, hi, lv, hv]; });
-    const his = b.filter(x => x && x[0]).map(x => x[0]), los = b.filter(x => x && x[2]).map(x => x[2]);
+    const sum = GE.summarise(b.map(x => x && [x[2], x[0], x[3], x[1]]));   // the site's bucket order: sell price, buy price, sold, bought
     const dd = ds.map(d => d.get(m.id)), week = dd.slice(-7);
     const ih = b.findIndex(x => x && x[0]), il = b.findIndex(x => x && x[2]);   // newest hour that traded
     items[m.id] = {
-      n: m.name, l: m.limit == null ? null : m.limit, w,
-      m: [med(his.slice(0, 6)), med(los.slice(0, 6))],
-      r: [his.length ? Math.min(...his) : 0, his.length ? Math.max(...his) : 0, los.length ? Math.min(...los) : 0, los.length ? Math.max(...los) : 0],
-      v: [b.reduce((a, x) => a + (x ? x[3] : 0), 0), b.reduce((a, x) => a + (x ? x[1] : 0), 0)],
+      n: m.name, l: m.limit == null ? null : m.limit, w: sum.w, m: sum.m, r: sum.r, v: sum.v,
       d: dd.map(x => (x ? x[0] : 0)), e: dd.map(x => (x ? x[2] : 0)),
       dv: [Math.round(week.reduce((a, x) => a + (x ? x[3] : 0), 0) / 7), Math.round(week.reduce((a, x) => a + (x ? x[1] : 0), 0) / 7)],
       p: [ih < 0 ? 0 : b[ih][0], ih < 0 ? 0 : T - ih * HOUR, il < 0 ? 0 : b[il][2], il < 0 ? 0 : T - il * HOUR],

@@ -14,12 +14,16 @@ The "How it works" tab on the site explains the checks each option has to pass.
 
 ## How it stays current
 
-- `scripts/scrape.py` pulls 24 hours of hourly prices and 10 days of daily
-  prices for every item from the [OSRS Wiki prices API](https://prices.runescape.wiki)
+- `scripts/scrape.py` pulls the last 24 complete hours of prices and 10 days of
+  daily prices for every item from the [OSRS Wiki prices API](https://prices.runescape.wiki)
   and writes `site/data.json`. A GitHub Actions workflow
-  (`.github/workflows/refresh.yml`) runs it every 4 hours.
-- The page also fetches live prices from the same API each time it is opened,
-  so the offer prices are current even between runs.
+  (`.github/workflows/refresh.yml`) runs it every hour.
+- GitHub starts scheduled runs late and sometimes skips one, so the page does
+  not depend on that. Whenever `data.json` stops short of the last complete
+  hour, the page fetches the missing hours from the API itself and works out
+  the same summary (`addHour` and `summarise` in `site/core.js`).
+- Live prices are checked every minute while the page is on screen, and again
+  whenever you return to it.
 
 ## How the rules were tested
 
